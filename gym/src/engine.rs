@@ -3532,6 +3532,94 @@ impl Snap {
     }
 }
 
+#[cfg(test)]
+mod pocket_tests {
+    use super::*;
+
+    fn battle(player: usize, fallen_lanes: u8) -> Engine {
+        let mut eng = Engine::new(Library::default_lib());
+        let deck: Vec<_> = [
+            "knight", "cannon", "archers", "giant", "musketeer", "valkyrie", "minions",
+            "minipekka",
+        ]
+        .iter()
+        .map(|name| eng.lib.id_of(name).unwrap())
+        .collect();
+        eng.reset(7, Some([deck.clone(), deck]));
+        let enemy = 1 - player as u8;
+        eng.entities.retain(|e| {
+            e.owner != enemy
+                || !e.is_tower
+                || e.is_king
+                || fallen_lanes & (1 << lane_of(e.pos.x)) == 0
+        });
+        eng
+    }
+
+    fn seat_pos(player: usize, x: f64, y: f64) -> V2 {
+        let pos = V2::new(Fx::from_f64(x), Fx::from_f64(y));
+        if player == 0 { pos } else { V2::new(pos.x, mirror_y(pos.y)) }
+    }
+
+    #[test]
+    fn pockets_open_only_four_enemy_land_rows_in_the_fallen_lane() {
+        for player in 0..2 {
+            for fallen in 0u8..4 {
+                let eng = battle(player, fallen);
+                for card in ["knight", "cannon"] {
+                    let def = eng.lib.id_of(card).unwrap();
+                    // Cover land only; river placement is a separate rule.
+                    for row in (0..15).chain(17..32) {
+                        for col in 0..18 {
+                            let lane = if col < 9 { 0 } else { 1 };
+                            let expected = row < 15 || (fallen & (1 << lane) != 0 && row < 21);
+                            let pos = seat_pos(player, col as f64 + 0.5, row as f64 + 0.5);
+                            assert_eq!(
+                                eng.deploy_allowed(player, pos, def), expected,
+                                "{card}, player {player}, fallen {fallen:02b}, tile ({col}, {row})"
+                            );
+                        }
+                    }
+                }
+                // The pocket limit must not restrict cards that deploy anywhere.
+                for card in ["miner", "goblin_drill"] {
+                    let def = eng.lib.id_of(card).unwrap();
+                    assert!(eng.deploy_allowed(player, seat_pos(player, 8.5, 26.5), def));
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn deep_pocket_deploys_are_rejected_without_spending_or_cycling() {
+        for player in 0..2 {
+            for card in ["knight", "cannon"] {
+                let mut eng = battle(player, 0b01);
+                let def = eng.lib.id_of(card).unwrap();
+                let index = eng.queue[player].iter().position(|&id| id == def).unwrap();
+                eng.queue[player].swap(0, index);
+                let hand = eng.queue[player].clone();
+                let elixir = eng.elixir[player];
+                let entities = eng.entities.len();
+                for y in [21.5, 26.5] {
+                    let pos = seat_pos(player, 8.5, y);
+                    let action = Action { slot: 0, x: pos.x, y: pos.y };
+                    assert_eq!(eng.try_deploy(player, action), ActionResult::NotYourSide);
+                    assert_eq!(eng.elixir[player], elixir);
+                    assert_eq!(eng.queue[player], hand);
+                    assert_eq!(eng.entities.len(), entities);
+                }
+                let pos = seat_pos(player, 8.5, 20.5);
+                let action = Action { slot: 0, x: pos.x, y: pos.y };
+                assert_eq!(eng.try_deploy(player, action), ActionResult::Ok);
+                assert_eq!(eng.elixir[player], elixir - Fx::from_int(eng.lib.defs[def].elixir as i64));
+                assert_eq!(eng.entities.len(), entities + 1);
+                assert_eq!(eng.entities.last().unwrap().pos, pos);
+            }
+        }
+    }
+}
+
 // [rev] validation tests for revive + multi-stage death-spawn chaining
 #[cfg(test)]
 mod rev_tests {

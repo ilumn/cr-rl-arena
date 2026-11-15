@@ -212,7 +212,7 @@ Reply to every `obs` with one of:
   it falls in.
 - Troops and buildings must go on your own side (`y` below 15), plus the pocket
   that opens on the enemy side once you have destroyed that lane's princess tower
-  (`y` below 27 in that lane). Spells can go anywhere.
+  (four rows of enemy land, `17 <= y < 21` in that lane). Spells can go anywhere.
 - To use your champion's ability, send slot `100` (`cr_sim.ABILITY_SLOT`) with any
   `x`, `y`.
 
