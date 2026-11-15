@@ -85,6 +85,7 @@ class MatchLog:
                     "outcome": int(r["outcome"]), "crowns": list(r["crowns"]),
                     "ticks": int(r["ticks"]), "delta": None, "r0": None, "r1": None,
                     "upset": False, "forfeit": False,
+                    "rated": r.get("rated", True), "human": r.get("human", [False, False]),
                     "deck0": r.get("deck0"), "deck1": r.get("deck1"), "file": n,
                 }
             except (OSError, ValueError, KeyError, TypeError):
@@ -110,6 +111,8 @@ class MatchLog:
     def _apply(self, e: dict):
         self.matches.append(e)
         self.by_id[int(e["id"])] = e
+        if not e.get("rated", True):
+            return                         # saved exhibitions never enter ranked summaries
         out, crowns, delta = e["outcome"], e["crowns"], e.get("delta")
         for seat, name in ((0, e["p0"]), (1, e["p1"])):
             a = self.agents.setdefault(name, _Agent())
@@ -148,7 +151,13 @@ class MatchLog:
         """Rank change per agent compared with MOVE_WINDOW matches ago."""
         then = {r["name"]: r["rating"] for r in standings}
         seen: set[str] = set()
-        for e in reversed(self.matches[-MOVE_WINDOW:]):
+        counted = 0
+        for e in reversed(self.matches):
+            if not e.get("rated", True):
+                continue
+            counted += 1
+            if counted > MOVE_WINDOW:
+                break
             d = e.get("delta")
             if d is None:
                 continue
@@ -195,6 +204,7 @@ class MatchLog:
                 "outcome": e["outcome"], "crowns": e["crowns"], "ticks": e["ticks"],
                 "delta": e.get("delta"), "upset": bool(e.get("upset")),
                 "forfeit": bool(e.get("forfeit")), "replay": bool(e.get("file")),
+                "rated": e.get("rated", True), "human": e.get("human", [False, False]),
             } for e in reversed(self.matches[-FEED:])]
             return {
                 "rows": rows, "matches": feed,

@@ -21,4 +21,4 @@ cr-arena = "cr_server.server:run"
 packages = ["cr_server"]
 
 [tool.setuptools.package-data]
-cr_server = ["web/*.html"]
+cr_server = ["web/*.html", "web/*.js"]
