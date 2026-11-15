@@ -40,10 +40,11 @@ pub const PRINCESS_HALF: Fx = Fx::from_raw(3 * ONE / 2); // 3x3
 // Deploy zones. Player 0 owns y < 15; player 1 owns y >= 17.
 pub const P0_DEPLOY_MAX_Y: Fx = Fx::from_int(15);
 pub const P1_DEPLOY_MIN_Y: Fx = Fx::from_int(17);
-// After an enemy princess tower falls, its lane's half of the enemy side opens
-// up to the back edge of that tower (p0: y in [17,27); p1: y in [5,15)).
-pub const POCKET_FAR_Y_P0: Fx = Fx::from_int(27);
-pub const POCKET_FAR_Y_P1: Fx = Fx::from_int(5);
+// A fallen enemy princess tower opens four rows of enemy land in its lane:
+// p0: y in [17,21); p1: y in [11,15). The live king's 16-tile-deep no-deploy
+// box (centered at y=29 for p0's enemy) still excludes y >= 21.
+pub const POCKET_FAR_Y_P0: Fx = Fx::from_int(21);
+pub const POCKET_FAR_Y_P1: Fx = Fx::from_int(11);
 
 // Match timing (seconds -> ticks).
 pub const REGULATION_TICKS: i64 = 180 * TICKS_PER_SECOND;
