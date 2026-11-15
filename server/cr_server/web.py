@@ -28,7 +28,7 @@ from websockets.http11 import Response
 from . import match
 
 WEB_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "web")
-PAGES = {"/": "index.html", "/replay": "replay.html"}
+PAGES = {"/": "index.html", "/replay": "replay.html", "/play": "play.html"}
 REPLAY_RE = re.compile(r"^/api/replay/(\d{1,12})$")
 TRACE_CACHE = 24            # most-recently-watched traces kept (gzipped) in memory
 CSP = ("default-src 'self'; script-src 'self' 'unsafe-inline'; "
@@ -80,6 +80,11 @@ class Web:
                     return _response(200, f.read(), "text/html; charset=utf-8", gz=gz, cache="no-cache")
             if path == "/api/standings":
                 return _json(200, self.arena.standings_snapshot(), gz=gz)
+            if path == "/api/matchmaking":
+                return _json(200, self.arena.matchmaking_snapshot(), gz=gz)
+            if path == "/arena.js":
+                with open(os.path.join(WEB_DIR, "arena.js"), "rb") as f:
+                    return _response(200, f.read(), "text/javascript; charset=utf-8", gz=gz, cache="no-cache")
             if path == "/healthz":
                 return _response(200, b"ok\n", "text/plain; charset=utf-8")
             m = REPLAY_RE.match(path)
@@ -125,5 +130,7 @@ class Web:
         tr = match.trace(cr_sim, rec)
         tr["match"] = {k: entry.get(k) for k in
                        ("id", "at", "p0", "p1", "outcome", "crowns", "ticks", "delta", "forfeit", "upset")}
+        tr["match"]["rated"] = entry.get("rated", True)
+        tr["match"]["human"] = entry.get("human", [False, False])
         tr["match"]["deck0"], tr["match"]["deck1"] = rec.get("deck0"), rec.get("deck1")
         return gzip.compress(json.dumps(tr, separators=(",", ":")).encode(), 6)

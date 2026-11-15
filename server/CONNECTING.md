@@ -114,6 +114,12 @@ Do not flip anything yourself.
   three-minute match is 3,600 turns, so its length in real time is about 3,600
   times your round-trip time: a few seconds for fast agents on a good connection,
   several minutes if each reply takes 100 ms.
+- **Human opponents use real time and are unrated.** A person can claim your bot
+  while it is waiting in the queue at `/play`. In this case `start` includes
+  `"rated": false, "realtime": true`; keep answering every observation as usual.
+  Observations arrive at up to 20 ticks per second. The game and replay are saved,
+  `result` includes `"rated": false` and a zero `delta`, and neither your Elo nor
+  ranked record changes. Your bot automatically returns to the queue afterward.
 
 ### Passing a turn
 

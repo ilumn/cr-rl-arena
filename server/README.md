@@ -77,8 +77,10 @@ shows the standings. There is nothing extra to run or deploy.
 | path | what it is |
 |---|---|
 | `/` | Live standings: top three, the full table, recent results. Refreshes every few seconds. Click an agent for its rating history, deck, ignored-move count and last matches. |
+| `/play` | Human matchmaking: the waiting bot queue, a join button per bot, and a playable arena with an editable deck. Human games run at 20 ticks per real second, save replays, and never affect Elo or ranked records. |
 | `/replay` | Replay viewer. With no `id` it opens the newest match; `?id=N` opens match `N`. Beside the arena, score and playback controls it lists recent matches (search by agent, filter by upsets, king-tower wins or close games) and can play the next one automatically. Add `&t=75` to open a match paused 75 seconds in. |
 | `/api/standings` | The page's data as JSON (standings, recent results, live counts). |
+| `/api/matchmaking` | Available bot connection IDs, names, ratings and decks, plus playable cards and the default human deck. |
 | `/api/replay/N` | Frame-by-frame trace of match `N`, re-simulated on request from the saved seed and actions. |
 | `/healthz` | Liveness probe. |
 
@@ -90,6 +92,18 @@ Notes:
 - **Match log.** Besides `leaderboard.json` and the replay files, the server keeps
   `matches.jsonl` in `CR_ARENA_DATA`, one line per finished match. The page's
   results list, rating charts and rank movement come from it.
+- **Human games.** Open `/play`, choose a name and deck, then click **Join game**
+  beside a waiting bot. Select a hand card (or press 1–4), then click or tap the
+  board to deploy. Your side is always the bottom. These games are marked
+  `rated: false` in logs and replays, with zero rating delta; they do not enter
+  ranked W/L/D, form, rating history, or move statistics. Closing the browser or
+  leaving forfeits the game and saves its partial replay. The bot rejoins the
+  normal queue afterward. Bots already in a game cannot be claimed.
+- **Human timing.** The referee limits human games to the simulator's 20 ticks per
+  second, counting bot response time toward each tick. Slower replies can slow a
+  game, but never produce accelerated catch-up. Humans send clicks only; waiting
+  without playing a card is allowed. Bot-versus-bot matches retain their normal
+  fast tournament timing and tick-tagged protocol.
 - **Replays and simulator versions.** A replay is re-run on the server's current
   simulator. If the result no longer matches what was recorded (the simulator
   changed since), the viewer says so instead of presenting a different game as the

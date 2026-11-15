@@ -1,0 +1,251 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark">
+<title>Matchmaking · CR Arena</title>
+<link rel="icon" href="data:,">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+:root { --bg:#090b10; --bg-2:#0e1118; --panel:#12161f; --panel-2:#171c27; --line:#222938; --line-2:#2c3446; --fg:#eef1f7; --fg-2:#b9c0d0; --muted:#7d879c; --gold:#ffb829; --p0:#5aa8ff; --p1:#ff6f91; --elixir:#d78aff; --win:#3ddc97; --loss:#ff6166; --disp:"Barlow Condensed","Arial Narrow",system-ui,sans-serif; }
+* { box-sizing:border-box; }
+[hidden] { display:none !important; }
+body { margin:0; background:var(--bg); color:var(--fg); font:14px/1.5 Inter,system-ui,sans-serif; font-variant-numeric:tabular-nums; }
+a { color:var(--gold); text-decoration:none; }
+button,input,select { font:inherit; color:inherit; }
+button,.button { display:inline-block; border:1px solid var(--line-2); border-radius:8px; background:var(--panel-2); padding:10px 16px; cursor:pointer; font-weight:600; }
+button:hover,.button:hover { border-color:var(--gold); }
+button:active { transform:translateY(1px); }
+button:disabled { opacity:.4; cursor:default; transform:none; }
+button.go { background:var(--gold); color:var(--bg); border-color:var(--gold); }
+:focus-visible { outline:2px solid var(--gold); outline-offset:3px; }
+.wrap { max-width:1120px; margin:auto; padding:24px; }
+header { display:flex; flex-wrap:wrap; align-items:center; gap:16px; margin-bottom:24px; }
+h1,h2 { font-family:var(--disp); text-transform:uppercase; letter-spacing:.04em; line-height:1.1; margin:0; }
+h1 { font-size:36px; } h2 { font-size:24px; }
+header a { margin-left:auto; }
+.badge { color:var(--gold); border:1px solid var(--line-2); border-radius:6px; padding:4px 8px; font-size:12px; white-space:nowrap; }
+.intro { margin:8px 0 24px; color:var(--fg-2); }
+.panel { border:1px solid var(--line); border-radius:14px; background:var(--panel); padding:20px; }
+.setup { display:grid; grid-template-columns:1fr 2fr; gap:24px; margin-bottom:20px; }
+label,.label { display:block; font-size:12px; color:var(--muted); margin-bottom:8px; }
+input,select { background:var(--bg-2); border:1px solid var(--line-2); border-radius:8px; padding:10px; width:100%; min-width:0; }
+.deck { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:8px; }
+select { font-size:12px; text-transform:capitalize; }
+.queue-head { display:flex; align-items:center; gap:16px; margin-bottom:16px; }
+.queue-head span { color:var(--muted); }
+.queue { list-style:none; padding:0; margin:0; }
+.queue li { border-top:1px solid var(--line); padding:16px 0; display:flex; align-items:center; gap:16px; }
+.queue li:last-child { padding-bottom:0; }
+.queue .who { flex:1; min-width:0; overflow-wrap:anywhere; }
+.queue b { font-size:17px; display:block; }
+.queue small { color:var(--muted); }
+.empty { padding:24px 0; color:var(--fg-2); }
+.status { min-height:24px; margin:12px 0; color:var(--fg-2); }
+.status.error { color:var(--loss); }
+.game { display:grid; grid-template-columns:minmax(0,1fr) 320px; gap:20px; align-items:start; }
+.field { display:flex; flex-direction:column; align-items:center; min-width:0; }
+.score { display:flex; align-items:center; gap:12px; width:100%; margin-bottom:12px; }
+.score strong { font:600 32px/1 var(--disp); color:var(--gold); }
+.score span { overflow-wrap:anywhere; }
+.score .timer { margin-left:auto; font:600 28px/1 var(--disp); white-space:nowrap; }
+canvas { display:block; max-width:100%; touch-action:none; cursor:crosshair; border-radius:10px; }
+.controls { position:sticky; top:20px; }
+.controls p { color:var(--fg-2); }
+.elixir { margin:16px 0; color:var(--elixir); }
+progress { display:block; height:12px; width:100%; margin-top:8px; accent-color:var(--elixir); }
+.hand { display:grid; grid-template-columns:1fr 1fr; gap:8px; }
+.card { min-height:96px; text-align:left; padding:12px; }
+.card small { display:block; color:var(--muted); margin-top:6px; font-size:11px; }
+.card .cost { color:var(--elixir); float:right; }
+.card[aria-pressed=true] { border-color:var(--gold); background:var(--bg-2); box-shadow:inset 0 0 0 1px var(--gold); }
+.card.unaffordable { opacity:.5; }
+.card b { display:block; text-transform:capitalize; margin-top:6px; }
+.next { font-size:12px; color:var(--muted); margin:12px 0 20px; text-transform:capitalize; }
+.ability { width:100%; margin-bottom:16px; }
+.finish h2 { color:var(--gold); font-size:36px; }
+.finish a { margin-right:12px; margin-top:8px; }
+.playing .intro { display:none; }
+.playing header { margin-bottom:12px; }
+.playing .status { margin:0 0 8px; }
+@media(max-width:760px) { .wrap { padding:16px; } .setup,.game { grid-template-columns:1fr; } .deck { grid-template-columns:1fr 1fr; } .controls { position:static; } .hand { grid-template-columns:repeat(4,minmax(0,1fr)); } .card { padding:8px; min-height:88px; font-size:12px; } .game { gap:12px; } .panel { padding:16px; } }
+@media(max-width:760px) { .playing .wrap { padding:12px; } .playing header { gap:8px; } .playing h1 { font-size:26px; } .playing header a { font-size:12px; } .playing .badge { font-size:10px; } .controls { position:sticky; bottom:0; padding:10px; } .controls h2,.controls > p:not(#hint),.controls .next { display:none; } .card { min-height:68px; font-size:11px; } .card small { font-size:10px; } .elixir { margin:0 0 8px; } .elixir progress { height:8px; margin-top:4px; } #hint { margin:6px 0; font-size:12px; } #leave { padding:6px 10px; font-size:12px; } }
+</style>
+</head>
+<body>
+<main class="wrap">
+  <header><h1>Matchmaking</h1><span class="badge">Human vs bot · Unrated</span><a href="/">Standings &amp; replays →</a></header>
+  <p class="intro">Choose a waiting bot and take the bottom side of the arena. Games run in real time and are saved as replays. Elo and ranked records stay unchanged.</p>
+  <div id="status" class="status" role="status" aria-live="polite"></div>
+  <section id="lobby">
+    <div class="panel setup">
+      <div><label for="name">Your name</label><input id="name" maxlength="40" placeholder="Player" autocomplete="nickname"></div>
+      <div><span class="label" id="deck-label">Your deck · 8 different cards</span><div id="deck" class="deck" role="group" aria-labelledby="deck-label"></div></div>
+    </div>
+    <section class="panel" aria-labelledby="queue-title">
+      <div class="queue-head"><h2 id="queue-title">Waiting bots</h2><span id="queue-count">Connecting…</span></div>
+      <ul id="queue" class="queue"></ul>
+      <p class="empty" id="empty">Loading the queue…</p>
+    </section>
+  </section>
+  <section id="game" class="game" hidden aria-label="Live game">
+    <div class="field" id="field">
+      <div class="score"><span id="opponent"></span><strong id="crowns">0–0</strong><span class="timer" id="clock">3:00</span></div>
+      <canvas id="arena" aria-label="Battle arena. Select a card, then tap a tile to deploy it."></canvas>
+    </div>
+    <section class="panel controls">
+      <h2>Your hand</h2>
+      <p>Select a card, then click or tap the arena to deploy. Your towers are at the bottom.</p>
+      <div class="elixir"><b id="elixir">5.0</b> / 10 elixir<progress id="elixir-bar" max="10" value="5" aria-label="Elixir"></progress></div>
+      <div id="hand" class="hand" role="group" aria-label="Select a card"></div>
+      <div id="next" class="next"></div>
+      <button id="ability" class="ability" type="button">Champion ability (A)</button>
+      <p id="hint" role="status">Select a card with 1–4, or tap it below.</p>
+      <button id="leave" type="button">Leave game</button>
+    </section>
+  </section>
+  <section id="finish" class="panel finish" hidden><h2 id="result"></h2><p id="result-detail"></p><a class="button" id="replay" href="/replay">Watch saved replay</a><a class="button" href="/play">Play another bot</a></section>
+</main>
+<script src="/arena.js"></script>
+<script>
+"use strict";
+const $ = id => document.getElementById(id);
+const esc = s => String(s).replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const cardName = s => String(s).replace(/_/g," ");
+const cv = $("arena"), board = createArena(cv);
+let socket = null, arena = null, obs = null, previous = null, receivedAt = 0, selected = null, selectedCard = null;
+let target = null, busy = false, initialized = false, ended = false, deck = [], lastHand = "", lastHint = "none";
+let autoBot = new URLSearchParams(location.search).get("bot");
+try { $("name").value = localStorage.getItem("human-name") || ""; deck = JSON.parse(localStorage.getItem("human-deck") || "[]"); } catch(e) {}
+function status(text, error=false) { $("status").textContent = text; $("status").classList.toggle("error",error); }
+function buildDeck(data) {
+  if (deck.length !== 8 || deck.some(c => !data.cards.includes(c))) deck = data.default_deck.slice();
+  $("deck").innerHTML = deck.map((c,i) => `<select aria-label="Deck card ${i+1}">${data.cards.map(n => `<option value="${esc(n)}"${n === c ? " selected" : ""}>${esc(cardName(n))}</option>`).join("")}</select>`).join("");
+  $("deck").querySelectorAll("select").forEach((el,i) => el.addEventListener("change", () => { deck[i] = el.value; }));
+}
+async function poll() {
+  if (busy) return;
+  try {
+    const res = await fetch("/api/matchmaking",{cache:"no-store"});
+    if (!res.ok) throw new Error();
+    const data = await res.json();
+    if (!initialized) { buildDeck(data); initialized = true; }
+    $("queue-count").textContent = `${data.waiting.length} waiting · ${data.live} games in progress`;
+    $("empty").hidden = data.waiting.length > 0;
+    $("empty").textContent = "No bots are waiting at present. Available bots appear here automatically when they join or finish a game.";
+    $("queue").innerHTML = data.waiting.map(bot => `<li><div class="who"><b>${esc(bot.name)}</b><small>${Math.round(bot.rating)} Elo · ${bot.deck.map(cardName).map(esc).join(" · ")}</small></div><button class="go" type="button" data-bot="${esc(bot.id)}">Join game</button></li>`).join("");
+    if (autoBot) { const id = autoBot; autoBot = null; join(id); }
+  } catch(e) { $("queue-count").textContent = "Reconnecting…"; $("empty").hidden = false; $("empty").textContent = "The queue could not be loaded. Retrying automatically."; }
+}
+function join(bot) {
+  if (busy) return;
+  if (new Set(deck).size !== 8) return status("Choose 8 different cards before joining.",true);
+  busy = true; ended = false; status("Joining the game…");
+  $("queue").querySelectorAll("button").forEach(b => b.disabled = true);
+  try { localStorage.setItem("human-name",$("name").value); localStorage.setItem("human-deck",JSON.stringify(deck)); } catch(e) {}
+  const ws = new WebSocket((location.protocol === "https:" ? "wss://" : "ws://") + location.host);
+  socket = ws;
+  ws.addEventListener("open", () => ws.send(JSON.stringify({t:"play",bot,name:$("name").value,deck})));
+  ws.addEventListener("message", e => {
+    const m = JSON.parse(e.data);
+    if (m.t === "start") {
+      arena = m.arena; obs = previous = null; selected = selectedCard = null; target = null; lastHand = ""; lastHint = "none";
+      $("lobby").hidden = true; $("game").hidden = false; $("opponent").textContent = m.opponent;
+      document.body.classList.add("playing");
+      $("hint").textContent = "Select a card with 1–4, or tap it below.";
+      $("ability").hidden = !deck.some(c => ["archer_queen","golden_knight","skeleton_king","mighty_miner","monk","little_prince","boss_bandit","goblinstein"].includes(c));
+      status("Game in progress · Real time · Unrated");
+    } else if (m.t === "obs") {
+      previous = obs; obs = m.obs; receivedAt = performance.now();
+      if (!previous) {
+        board.configure(arena,obs.entities.filter(e => e[7]).map(e => ({o:e[0],x:e[2],y:e[3],king:e[1] === "king_tower",hw:e[10],hh:e[11]})));
+      }
+      if (selected !== null && selectedCard !== obs.hand[selected]) selected = selectedCard = null;
+      hud();
+      if (!previous) resize();
+    } else if (m.t === "result") {
+      ended = true; $("game").hidden = true; $("finish").hidden = false;
+      document.body.classList.remove("playing");
+      $("result").textContent = m.result === "win" ? "You won" : m.result === "loss" ? "Bot wins" : "Draw";
+      $("result-detail").textContent = `${m.crowns[0]}–${m.crowns[1]} crowns · Unrated · Game #${m.match} saved. Elo and ranked records are unchanged.`;
+      $("replay").href = "/replay?id=" + m.match;
+      status("Game complete");
+    } else if (m.t === "error" || m.t === "aborted") {
+      status(m.msg || m.reason,true);
+    }
+  });
+  ws.addEventListener("close", () => {
+    if (socket !== ws) return;
+    socket = null;
+    if (!ended) {
+      busy = false; $("lobby").hidden = false; $("game").hidden = true;
+      document.body.classList.remove("playing");
+      if (!$("status").classList.contains("error")) status("Connection closed. Choose a waiting bot to play again.",true);
+      poll();
+    }
+  });
+  ws.addEventListener("error", () => status("Unable to connect to the arena. Please try again.",true));
+}
+function resize() {
+  if (!arena || !obs) return;
+  const controls = innerWidth <= 760 ? document.querySelector(".controls").offsetHeight + 16 : 0;
+  board.resize($("field").clientWidth,Math.max(240,innerHeight - cv.getBoundingClientRect().top - controls - 20));
+}
+function hud() {
+  const time = Math.abs(arena.regulation - obs.tick) / arena.tps, sec = Math.ceil(time);
+  $("clock").textContent = (obs.tick >= arena.regulation ? "+" : "") + Math.floor(sec/60) + ":" + String(sec%60).padStart(2,"0");
+  $("crowns").textContent = `${obs.crowns[0]}–${obs.crowns[1]}`;
+  $("elixir").textContent = obs.elixir.toFixed(1); $("elixir-bar").value = obs.elixir;
+  $("next").textContent = "Next: " + cardName(obs.next_card);
+  const hand = JSON.stringify([obs.hand,obs.hand_cost,obs.legal,selected]);
+  if (hand !== lastHand) {
+    lastHand = hand;
+    $("hand").innerHTML = obs.hand.map((c,i) => `<button type="button" class="card${obs.legal[i] ? "" : " unaffordable"}" data-slot="${i}" aria-pressed="${selected === i}"><span class="cost">${obs.hand_cost[i]} ♦</span><span>${i+1}</span><b>${esc(cardName(c))}</b><small>${obs.legal[i] ? "Ready" : "More elixir needed"}</small></button>`).join("");
+  }
+  if (obs.last_action !== lastHint) {
+    lastHint = obs.last_action;
+    if (lastHint !== "none") $("hint").textContent = lastHint === "ok" ? "Card played. Select your next card." : "Move ignored: " + cardName(lastHint) + ". Select a card and try again.";
+  }
+}
+function choose(slot) { if (!obs || ended) return; selected = slot; selectedCard = obs.hand[slot]; hud(); $("hint").textContent = cardName(selectedCard) + " selected. Tap a tile to deploy."; }
+$("queue").addEventListener("click", e => { const b = e.target.closest("button[data-bot]"); if(b) join(b.dataset.bot); });
+$("hand").addEventListener("click", e => { const b = e.target.closest("button[data-slot]"); if(b) choose(+b.dataset.slot); });
+function point(e) { const r = cv.getBoundingClientRect(); return board.point(e.clientX-r.left,e.clientY-r.top); }
+cv.addEventListener("pointermove",e => { if(obs) target = point(e); });
+cv.addEventListener("pointerleave",() => target = null);
+cv.addEventListener("pointerdown",e => {
+  if (!obs || selected === null || !socket || ended) return;
+  const p = point(e); if (!p) return;
+  if (!obs.legal[selected]) { $("hint").textContent = "Wait for more elixir before playing this card."; return; }
+  socket.send(JSON.stringify({t:"act",tick:obs.tick,action:[selected,p.x,p.y],card:selectedCard}));
+  selected = selectedCard = null; hud(); $("hint").textContent = "Move sent.";
+});
+function ability() { if (socket && obs && !ended) socket.send(JSON.stringify({t:"act",tick:obs.tick,action:[100,0,0]})); }
+$("ability").addEventListener("click",ability);
+$("leave").addEventListener("click",() => { ended = true; if(socket) socket.close(); location.href = "/play"; });
+addEventListener("keydown",e => {
+  if (!obs || ended || e.target.matches("input,select,textarea")) return;
+  if (/^[1-4]$/.test(e.key)) { e.preventDefault(); choose(+e.key-1); }
+  if (e.key.toLowerCase() === "a") ability();
+});
+addEventListener("resize",resize);
+function draw(now) {
+  if (obs && arena && !$("game").hidden) {
+    const k = previous ? Math.min(1,(now-receivedAt) / (1000/arena.tps)) : 1;
+    const old = new Map((previous ? previous.entities : []).map(e => [e[9],e]));
+    const ents = obs.entities.map(e => {
+      const p = old.get(e[9]) || e;
+      return {id:e[9],o:e[0],name:e[1],x:p[2]+(e[2]-p[2])*k,y:p[3]+(e[3]-p[3])*k,hp:e[4]/e[5],f:(e[6]?1:0)|(e[7]?2:0)|(e[8]?4:0),hw:e[10],hh:e[11],a:1,hit:e[4]<p[4],dx:e[2]-p[2],dy:e[3]-p[3],t0:0,t1:0};
+    });
+    board.draw({t:obs.tick,ents,events:[],deaths:[],labels:true});
+    if(selected !== null) board.target(target);
+  }
+  requestAnimationFrame(draw);
+}
+poll(); setInterval(() => { if(!document.hidden) poll(); },1000); requestAnimationFrame(draw);
+</script>
+</body>
+</html>

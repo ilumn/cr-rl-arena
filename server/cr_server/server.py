@@ -48,6 +48,8 @@ import json
 import os
 import random
 import time
+import uuid
+from contextlib import suppress
 
 import cr_sim
 import websockets
@@ -60,16 +62,20 @@ from .web import Web
 BIND = os.environ.get("CR_ARENA_BIND", "0.0.0.0:8765")
 DATA_DIR = os.environ.get("CR_ARENA_DATA", "./arena_data")
 MOVE_TIMEOUT = float(os.environ.get("CR_MOVE_TIMEOUT", "2.0"))
+HUMAN_DECK = ["knight", "archers", "giant", "musketeer", "valkyrie", "minions", "fireball", "arrows"]
 
 
 class WsAgent:
     """Wraps a connected websocket as a match-runner agent."""
+
+    human = False
 
     def __init__(self, ws, name, deck):
         self.ws = ws
         self.name = name
         self.deck = deck
         self.alive = True
+        self.queue_id = uuid.uuid4().hex
 
     async def send(self, obj):
         try:
@@ -124,10 +130,54 @@ class WsAgent:
             pass
 
 
+class HumanAgent(WsAgent):
+    """Sample clicks without waiting for a human response on every tick."""
+
+    human = True
+
+    def __init__(self, ws, name, deck):
+        super().__init__(ws, name, deck)
+        self.pending = None
+        self.tick = -1
+
+    async def receive(self):
+        try:
+            async for raw in self.ws:
+                try:
+                    msg = json.loads(raw)
+                except ValueError:
+                    continue
+                if not isinstance(msg, dict) or msg.get("t") != "act":
+                    continue
+                tick = msg.get("tick")
+                if type(tick) is int and 0 <= self.tick - tick <= cr_sim.TICKS_PER_SECOND * 2:
+                    action = match._validate(msg.get("action"))
+                    if action is not None and (0 <= action[0] < 4 or action[0] == cr_sim.ABILITY_SLOT):
+                        self.pending = (action, msg.get("card"), tick)
+        except websockets.ConnectionClosed:
+            pass
+        finally:
+            self.alive = False
+
+    async def act(self, obs, timeout):
+        self.tick = obs["tick"]
+        await self.send({"t": "obs", "obs": obs})
+        pending, self.pending = self.pending, None
+        if pending:
+            action, card, tick = pending
+            if self.tick - tick <= cr_sim.TICKS_PER_SECOND * 2:
+                # A second click must not accidentally play the replacement card
+                # after this hand slot has cycled.
+                if action[0] == cr_sim.ABILITY_SLOT or card == obs["hand"][action[0]]:
+                    return action, None
+        return None, None
+
+
 class Arena:
     def __init__(self):
         self.board = Leaderboard(os.path.join(DATA_DIR, "leaderboard.json"))
-        self.idle: asyncio.Queue[WsAgent] = asyncio.Queue()
+        self.idle: dict[str, WsAgent] = {}      # all waiting bots remain visible and claimable
+        self._queue_changed = asyncio.Event()
         self.replays_dir = os.path.join(DATA_DIR, "replays")
         os.makedirs(self.replays_dir, exist_ok=True)
         self.log = MatchLog(DATA_DIR)           # match history behind the web page
@@ -140,6 +190,12 @@ class Arena:
             raw = await asyncio.wait_for(ws.recv(), 30)
             msg = json.loads(raw)
         except Exception:
+            return
+        if not isinstance(msg, dict):
+            await ws.send(json.dumps({"t": "error", "msg": "expected a JSON object"}))
+            return
+        if msg.get("t") == "play":
+            await self._human_game(ws, msg)
             return
         if msg.get("t") == "leaderboard":
             await ws.send(json.dumps({"t": "leaderboard", "standings": self.board.standings()}))
@@ -160,12 +216,13 @@ class Arena:
         agent = WsAgent(ws, name, deck)
         await agent.send({"t": "joined", "name": name,
                           "rating": round(self.board.get(name).rating, 1)})
-        self.idle.put_nowait(agent)
+        self._enqueue(agent)
         self.online[name] = self.online.get(name, 0) + 1
         try:
             await ws.wait_closed()
         finally:
             agent.alive = False
+            self.idle.pop(agent.queue_id, None)
             left = self.online.get(name, 1) - 1
             if left > 0:
                 self.online[name] = left
@@ -175,6 +232,45 @@ class Arena:
     def standings_snapshot(self) -> dict:
         """Data for the web page: standings, recent results, live counts."""
         return self.log.snapshot(self.board.standings(), set(self.online), self.live)
+
+    def matchmaking_snapshot(self) -> dict:
+        return {
+            "waiting": [{"id": ag.queue_id, "name": ag.name,
+                         "rating": round(self.board.get(ag.name).rating, 1), "deck": ag.deck}
+                        for ag in self.idle.values() if ag.alive],
+            "live": self.live,
+            "cards": self._deck_checker.deployable_cards(),
+            "default_deck": HUMAN_DECK,
+        }
+
+    async def _human_game(self, ws, msg):
+        deck = msg.get("deck", HUMAN_DECK)
+        problem = self._deck_problem(deck)
+        if problem:
+            await ws.send(json.dumps({"t": "error", "msg": problem}))
+            return
+        bot_id = msg.get("bot")
+        bot = self.idle.pop(bot_id, None) if isinstance(bot_id, str) else None
+        if bot is None or not bot.alive:
+            await ws.send(json.dumps({"t": "error", "msg": "That bot is no longer waiting. Please choose another."}))
+            return
+        # Claiming the bot and removing it from the ranked queue is one operation
+        # with no await: two humans or the matchmaker cannot claim it together.
+        name = "Human · " + (str(msg.get("name") or "Player").strip() or "Player")[:40]
+        human = HumanAgent(ws, name, deck)
+        reader = asyncio.create_task(human.receive())
+        try:
+            await self._play(human, bot)
+        finally:
+            human.alive = False
+            reader.cancel()
+            with suppress(asyncio.CancelledError):
+                await reader
+
+    def _enqueue(self, agent):
+        if agent.alive and not agent.human:
+            self.idle[agent.queue_id] = agent
+            self._queue_changed.set()
 
     def _deck_problem(self, deck):
         """Why `deck` can't be played, or None if it is legal."""
@@ -190,17 +286,17 @@ class Arena:
 
     async def matchmaker(self):
         while True:
-            a = await self._next_live()
-            b = await self._next_live(exclude=a)
-            asyncio.create_task(self._play(a, b))
-
-    async def _next_live(self, exclude=None):
-        while True:
-            ag = await self.idle.get()
-            if ag.alive and ag is not exclude:
-                return ag
+            await self._queue_changed.wait()
+            self._queue_changed.clear()
+            waiting = [ag for ag in self.idle.values() if ag.alive]
+            for i in range(0, len(waiting) - 1, 2):
+                a, b = waiting[i:i + 2]
+                self.idle.pop(a.queue_id, None)
+                self.idle.pop(b.queue_id, None)
+                asyncio.create_task(self._play(a, b))
 
     async def _play(self, a: WsAgent, b: WsAgent):
+        rated = not (a.human or b.human)
         # Seats are drawn at random for every match: `a` is player 0 (bottom) from
         # here on. Queue order used to decide it, so with two agents connected the
         # same one was player 0 in every game.
@@ -209,10 +305,21 @@ class Arena:
         self.live += 1
         try:
             seed = random.getrandbits(63)
-            await a.send({"t": "start", "opponent": b.name})
-            await b.send({"t": "start", "opponent": a.name})
+            for ag, opponent in ((a, b), (b, a)):
+                start = {"t": "start", "opponent": opponent.name}
+                if not rated:
+                    start.update(rated=False, realtime=True)
+                if ag.human:
+                    start["arena"] = {
+                        "w": cr_sim.WIDTH, "h": cr_sim.HEIGHT, "tps": cr_sim.TICKS_PER_SECOND,
+                        "river_y": cr_sim.RIVER_Y, "river_half": cr_sim.RIVER_HALF,
+                        "bridges": list(cr_sim.BRIDGES), "bridge_half": cr_sim.BRIDGE_HALF,
+                        "regulation": cr_sim.REGULATION_TICKS,
+                    }
+                await ag.send(start)
 
-            res = await match.run_match(cr_sim, a, b, seed=seed, move_timeout=MOVE_TIMEOUT)
+            options = {"realtime": True} if not rated else {}
+            res = await match.run_match(cr_sim, a, b, seed=seed, move_timeout=MOVE_TIMEOUT, **options)
             if res.get("aborted") is not None:
                 # One or both agents stopped answering. The match is void: no rating
                 # change, no result, no replay. The silent agent is disconnected so
@@ -221,11 +328,12 @@ class Arena:
                 for ag in (a, b):
                     if ag in gone:
                         await ag.drop(f"removed: no reply to {match.MAX_MISSED_TURNS} turns in a row")
-                    else:
+                    elif rated:
                         await ag.send({"t": "aborted", "reason": "opponent stopped responding"})
-                print(f"[match void] {a.name} vs {b.name}: "
-                      f"{', '.join(g.name for g in gone)} stopped responding at tick {res['ticks']}")
-                return
+                if rated:
+                    print(f"[match void] {a.name} vs {b.name}: "
+                          f"{', '.join(g.name for g in gone)} stopped responding at tick {res['ticks']}")
+                    return
             out = res["outcome"]
             # forfeit: a disconnected agent loses to a connected one
             forfeit = False
@@ -233,30 +341,38 @@ class Arena:
                 out, forfeit = 2, True
             elif not b.alive and a.alive:
                 out, forfeit = 1, True
+            elif not rated and not a.alive and not b.alive:
+                out, forfeit = 3, True
 
             score_a = 1.0 if out == 1 else 0.0 if out == 2 else 0.5
-            before = (self.board.get(a.name).rating, self.board.get(b.name).rating)
-            delta = self.board.report(a.name, b.name, score_a)
-            mid = self._record(a, b, res, out, forfeit, delta, before)
+            before = tuple(None if ag.human else self.board.get(ag.name).rating for ag in (a, b))
+            delta = self.board.report(a.name, b.name, score_a) if rated else 0.0
+            mid = self._record(a, b, res, out, forfeit, delta, before, rated=rated)
 
             # each agent hears the result from its own side, never as a seat number
             c = res["crowns"]
             for ag, won, mine, d in ((a, 1, c, delta), (b, 2, c[::-1], -delta)):
                 await ag.send({"t": "result",
                                "result": "win" if out == won else "loss" if out in (1, 2) else "draw",
-                               "crowns": mine, "rating": round(self.board.get(ag.name).rating, 1),
-                               "delta": round(d, 1), "match": mid, "seed": seed})
+                               "crowns": mine, "rating": self._rating(ag),
+                               "delta": round(d, 1), "match": mid, "seed": seed,
+                               **({"rated": False} if not rated else {})})
             print(f"[match] {a.name} vs {b.name} -> {['--','P0','P1','draw'][out]} "
                   f"{res['crowns']} in {res['ticks']} ticks")
         except Exception as e:  # never let one match kill the server
             print(f"[match error] {a.name} vs {b.name}: {e!r}")
+            if not rated:
+                for ag in (a, b):
+                    await ag.send({"t": "error", "msg": "The game could not finish. Please try again."})
         finally:
             self.live -= 1
             for x in (a, b):
-                if x.alive:
-                    self.idle.put_nowait(x)
+                self._enqueue(x)
 
-    def _record(self, a, b, res, out, forfeit, delta, before):
+    def _rating(self, agent):
+        return None if agent.human else round(self.board.get(agent.name).rating, 1)
+
+    def _record(self, a, b, res, out, forfeit, delta, before, *, rated=True):
         """Save the replay file and append the match to the log the web page reads.
 
         `outcome` is the result that counted for the ratings; `sim_outcome` is what
@@ -266,8 +382,7 @@ class Arena:
         mid = self.log.next_id()
         fname = f"{mid:08d}.json"          # never built from agent names
         at = int(time.time() * 1000)
-        r0 = round(self.board.get(a.name).rating, 1)
-        r1 = round(self.board.get(b.name).rating, 1)
+        r0, r1 = self._rating(a), self._rating(b)
         winner_before, loser_before = (before if out == 1 else before[::-1])
         saved = True
         try:
@@ -275,7 +390,8 @@ class Arena:
                 json.dump({"id": mid, "at": at, "p0": a.name, "p1": b.name,
                            "deck0": a.deck, "deck1": b.deck,
                            **res, "outcome": out, "sim_outcome": res["outcome"],
-                           "forfeit": forfeit}, f)
+                           "forfeit": forfeit, "rated": rated,
+                           "human": [a.human, b.human]}, f)
         except OSError:
             saved = False
         try:
@@ -283,7 +399,8 @@ class Arena:
                 "id": mid, "at": at, "p0": a.name, "p1": b.name, "outcome": out,
                 "crowns": res["crowns"], "ticks": res["ticks"],
                 "delta": round(delta, 1), "r0": r0, "r1": r1,
-                "upset": out in (1, 2) and not forfeit and winner_before < loser_before - UPSET_GAP,
+                "upset": rated and out in (1, 2) and not forfeit and winner_before < loser_before - UPSET_GAP,
+                "rated": rated, "human": [a.human, b.human],
                 "forfeit": forfeit, "deck0": a.deck, "deck1": b.deck,
                 "moves": res.get("moves"), "ignored": res.get("ignored"),
                 "file": fname if saved else None,

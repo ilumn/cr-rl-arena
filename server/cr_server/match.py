@@ -19,8 +19,8 @@ from __future__ import annotations
 import asyncio
 from numbers import Real
 
-# An agent that lets this many turns in a row go by without answering has stopped
-# playing. The match is closed and nothing about it is recorded.
+# An agent that misses this many consecutive turns is removed. Ranked matches
+# are void; human exhibitions retain their partial record as a forfeit.
 MAX_MISSED_TURNS = 10
 
 
@@ -37,7 +37,8 @@ def _validate(action):
         return None
 
 
-async def run_match(sim, agent0, agent1, *, seed, move_timeout=2.0, max_ticks=None):
+async def run_match(sim, agent0, agent1, *, seed, move_timeout=2.0, max_ticks=None,
+                    realtime=False):
     """Play one match, asking both agents for a move on every tick.
 
     Each observation's `last_action` tells the agent what became of its previous
@@ -45,8 +46,8 @@ async def run_match(sim, agent0, agent1, *, seed, move_timeout=2.0, max_ticks=No
     had to drop the reply, it says why instead: "missed" (no answer in time) or
     "malformed".
 
-    Returns the match record, or `{"aborted": [seats]}` when one or both agents
-    stopped answering (MAX_MISSED_TURNS in a row): that match is void.
+    Returns the match record, including `aborted: [seats]` if agents stopped
+    answering. The caller voids ranked games or saves an exhibition forfeit.
     """
     b = sim.Battle()
     b.reset(seed, agent0.deck, agent1.deck)
@@ -60,7 +61,10 @@ async def run_match(sim, agent0, agent1, *, seed, move_timeout=2.0, max_ticks=No
     ignored = [0, 0]            # ...of which this many did nothing
     out = 0
     t = 0
+    aborted = None
+    loop = asyncio.get_running_loop()
     while out == 0 and t < max_ticks:
+        started = loop.time()
         obs = [dict(b.observe(0)), dict(b.observe(1))]
         for i in (0, 1):
             if problem[i]:
@@ -69,6 +73,8 @@ async def run_match(sim, agent0, agent1, *, seed, move_timeout=2.0, max_ticks=No
             agent0.act(obs[0], move_timeout),
             agent1.act(obs[1], move_timeout),
         )
+        if realtime and (not agent0.alive or not agent1.alive):
+            break                       # retain the partial game for the forfeit replay
         acts = [None, None]
         for i, (action, why) in enumerate(replies):
             problem[i] = why
@@ -79,7 +85,8 @@ async def run_match(sim, agent0, agent1, *, seed, move_timeout=2.0, max_ticks=No
             missed[i] = missed[i] + 1 if why == "missed" else 0
         gone = [i for i in (0, 1) if missed[i] >= MAX_MISSED_TURNS]
         if gone:
-            return {"aborted": gone, "ticks": t, "seed": seed}
+            aborted = gone
+            break
 
         for i in (0, 1):
             if acts[i] is not None:
@@ -93,8 +100,13 @@ async def run_match(sim, agent0, agent1, *, seed, move_timeout=2.0, max_ticks=No
                 moves[i] += 1
                 ignored[i] += 1
         t += 1
+        if realtime:
+            # Spend at least one real tick per simulation tick, including network
+            # time. A slow reply never causes a burst of accelerated catch-up.
+            await asyncio.sleep(max(0, 1 / sim.TICKS_PER_SECOND - (loop.time() - started)))
 
     return {
+        **({"aborted": aborted} if aborted is not None else {}),
         "outcome": out,                 # referee's code: 0 running, 1 seat 0, 2 seat 1, 3 draw
         "crowns": list(b.crowns()),     # [seat 0, seat 1]
         "ticks": t,
@@ -173,7 +185,7 @@ def trace(sim, rec, every=2):
     frames, events = [frame(0)], []
     # stop where the recorded match stopped (a match can be cut short by the server)
     out, t = 0, 0
-    maxt = rec.get("ticks") or (sim.REGULATION_TICKS + sim.OVERTIME_TICKS + 2)
+    maxt = rec.get("ticks", sim.REGULATION_TICKS + sim.OVERTIME_TICKS + 2)
     while out == 0 and t < maxt:
         acts = by_tick.get(t)
         if acts:
@@ -198,7 +210,7 @@ def trace(sim, rec, every=2):
         else:
             out = b.step(None, None)
         t += 1
-        if t % every == 0 or out != 0:
+        if t % every == 0 or out != 0 or t == maxt:
             frames.append(frame(t))
 
     crowns = list(b.crowns())

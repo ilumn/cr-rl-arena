@@ -37,6 +37,13 @@
   a { color: inherit; text-decoration: none; }
   :focus-visible { outline: 2px solid var(--gold); outline-offset: 2px; border-radius: 6px; }
   .sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+  .matchmaking { margin:24px 0 20px; }
+  .matchmaking .ph a { margin-left:auto; color:var(--gold); font-weight:600; }
+  .waiting { padding:12px 18px; color:var(--fg-2); display:flex; flex-wrap:wrap; gap:12px; align-items:center; }
+  .waiting a { border:1px solid var(--line-2); border-radius:8px; padding:8px 12px; font-size:13px; }
+  .waiting a:hover { border-color:var(--gold); }
+  .waiting a b { color:var(--gold); margin-left:12px; }
+  .matchmaking p { margin:0; padding:0 18px 14px; color:var(--muted); font-size:12px; }
 
   /* ---------- podium ---------- */
   .podium { display: grid; gap: 14px; margin: 28px 0 22px; }
@@ -202,6 +209,11 @@
 <body>
 <main class="wrap">
   <h1 class="sr">Tournament standings</h1>
+  <section class="panel matchmaking" aria-labelledby="h-matchmaking">
+    <div class="ph"><h2 id="h-matchmaking">Matchmaking</h2><span class="ct">Human vs bot</span><a href="/play">Play a bot →</a></div>
+    <div class="waiting" id="waiting">Loading waiting bots…</div>
+    <p>Real-time games · Saved replays · No Elo or ranked record changes</p>
+  </section>
   <section class="podium" id="podium" aria-label="Top agents" hidden></section>
 
   <div class="grid">
@@ -373,13 +385,13 @@ function renderFeed() {
   }
   $("feed").innerHTML = state.matches.map((m) => {
     const w0 = m.outcome === 1, w1 = m.outcome === 2;
-    const tag = m.forfeit ? `<span class="badge ff">Forfeit</span>` : m.outcome === 3 ? `<span class="badge dr">Draw</span>`
+    const tag = m.rated === false ? `<span class="badge dr">Unrated</span>` : m.forfeit ? `<span class="badge ff">Forfeit</span>` : m.outcome === 3 ? `<span class="badge dr">Draw</span>`
       : m.upset ? `<span class="badge up">Upset</span>` : Math.max(...m.crowns) === 3 ? `<span class="badge k3">King down</span>`
       : m.crowns[0] === m.crowns[1] ? `<span class="badge dr" title="Level on crowns; decided by tower health">Tiebreak</span>` : "";
     const body = `
       <div class="side${w0 ? " won" : ""}"><i style="background:var(--p0)"></i><span class="n">${esc(m.p0)}</span><span class="c">${m.crowns[0]}</span></div>
       <div class="side${w1 ? " won" : ""}"><i style="background:var(--p1)"></i><span class="n">${esc(m.p1)}</span><span class="c">${m.crowns[1]}</span></div>
-      <div class="ft"><span>${fmt.ago(m.at)}</span>·<span>${fmt.dur(m.ticks)}</span>${m.delta == null ? "" : `·<span>±<b>${Math.abs(m.delta).toFixed(1)}</b></span>`}${tag}
+      <div class="ft"><span>${fmt.ago(m.at)}</span>·<span>${fmt.dur(m.ticks)}</span>${m.rated === false || m.delta == null ? "" : `·<span>±<b>${Math.abs(m.delta).toFixed(1)}</b></span>`}${tag}
         ${m.replay ? `<span class="watch">Watch <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg></span>` : ""}</div>`;
     const label = `${m.p0} ${m.crowns[0]}, ${m.p1} ${m.crowns[1]}`;
     return `<li class="m${fresh.has(m.id) ? " fresh" : ""}">${m.replay ? `<a href="/replay?id=${m.id}" aria-label="Watch replay: ${esc(label)}">${body}</a>` : `<div>${body}</div>`}</li>`;
@@ -398,6 +410,16 @@ $("ws").textContent = (location.protocol === "https:" ? "wss://" : "ws://") + lo
 
 // ---- live data: poll the server, redraw only when something changed ----
 let sig = "", failures = 0;
+async function pollQueue() {
+  try {
+    const res = await fetch("/api/matchmaking", {cache:"no-store"});
+    if (!res.ok) throw new Error(res.status);
+    const data = await res.json();
+    $("waiting").innerHTML = data.waiting.length
+      ? data.waiting.map(b => `<a href="/play?bot=${encodeURIComponent(b.id)}">${esc(b.name)} · ${Math.round(b.rating)} Elo<b>Join game →</b></a>`).join("")
+      : "No bots are waiting. Available bots appear here automatically.";
+  } catch(e) { $("waiting").textContent = "Unable to load the queue. Retrying automatically."; }
+}
 async function poll() {
   try {
     const res = await fetch("/api/standings", { cache: "no-store" });
@@ -417,8 +439,8 @@ async function poll() {
     if (++failures >= 2) { const l = $("live"); l.className = "live off"; l.lastElementChild.textContent = "Reconnecting"; sig = ""; }
   }
 }
-function loop() { if (!document.hidden) poll(); }
-poll();
+function loop() { if (!document.hidden) { poll(); pollQueue(); } }
+loop();
 setInterval(loop, 3000);
 setInterval(() => { if (state && !document.hidden) { fresh = new Set(); renderFeed(); } }, 20000); // keep "2m ago" current
 document.addEventListener("visibilitychange", loop);
