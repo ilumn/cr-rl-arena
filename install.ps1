@@ -160,12 +160,18 @@ Step "Building the simulator (first build takes a few minutes)"
 $sac = Test-SmartAppControl
 if ($sac) { Warn "Smart App Control is ON; the build may be blocked. Trying anyway..." }
 $env:VIRTUAL_ENV = $Venv
+# maturin refuses to run when VIRTUAL_ENV and CONDA_PREFIX are both set, which
+# happens whenever a conda environment is active. Hide it for the build only.
+$condaPrefix = $env:CONDA_PREFIX
+if ($condaPrefix) { Warn "A conda environment is active; ignoring it for the build (.venv is used)." }
+$env:CONDA_PREFIX = $null
 Push-Location (Join-Path $Root "gym")
 try {
     & (Join-Path $Venv "Scripts\maturin.exe") develop --release
     $buildOk = ($LASTEXITCODE -eq 0)
 } finally {
     Pop-Location
+    if ($condaPrefix) { $env:CONDA_PREFIX = $condaPrefix }
 }
 if (-not $buildOk) {
     if ($sac) { Explain-SmartAppControl }
