@@ -96,7 +96,10 @@ ok "Packages installed."
 
 # ---- 5. Build the simulator --------------------------------------------------
 step "Building the simulator (first build takes a few minutes)"
-( cd "$ROOT/gym" && VIRTUAL_ENV="$VENV" "$VENV/bin/maturin" develop --release ) \
+# maturin refuses to run when VIRTUAL_ENV and CONDA_PREFIX are both set, which
+# happens whenever a conda environment is active. Hide it for the build only.
+[ -n "${CONDA_PREFIX:-}" ] && warn "A conda environment is active; ignoring it for the build (.venv is used)."
+( cd "$ROOT/gym" && unset CONDA_PREFIX && VIRTUAL_ENV="$VENV" "$VENV/bin/maturin" develop --release ) \
   || fail "The simulator did not build. See the messages above."
 
 # ---- 6. Check it works -------------------------------------------------------
