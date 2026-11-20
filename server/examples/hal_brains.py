@@ -27,10 +27,8 @@ class ActorCritic(nn.Module):
     def forward(self, observation):
         # hidden - 128 intermediate features
         hidden = self.shared(observation)
-        # 
+        
         logits = self.policy_head(hidden)
         # .squeeze(-1) removes final dimension of size 1, turning value output into scalar tensor
         value = self.value_head(hidden).squeeze(-1)
         return logits, value
-
-    

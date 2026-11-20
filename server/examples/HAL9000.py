@@ -1,8 +1,3 @@
-"""A minimal reference agent: connects, joins the queue, and plays random legal
-moves forever. Shows the full client protocol students build their RL agent on.
-
-    python examples/random_agent.py [ws://host:port] [name]
-"""
 import asyncio
 import json
 from pathlib import Path
@@ -32,8 +27,8 @@ ENTITY_TYPES.append("unknown")
 TYPE_INDEX = {name: i for i, name in enumerate(ENTITY_TYPES)}
 
 POSITIONS = [
-        (3, 15),
-        (15, 15),
+        (3, 14.5),
+        (15, 14.5),
         (3, 8),
         (15, 8),
         (3, 5),
