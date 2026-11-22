@@ -238,7 +238,7 @@
         <div class="over" id="over" hidden><div><small id="over-k"></small><b id="over-t"></b><span id="over-s"></span><a class="ib" id="over-r" hidden>Watch the replay</a></div></div>
       </div>
       <div class="side">
-        <div class="panel now"><span class="tag live" id="g-live"><i></i>Live</span><span class="tag" id="g-done" hidden>Full time</span><h2 id="g-title"></h2><span class="tag" id="g-speed"></span><span class="tag" id="g-phase" hidden></span><span class="clock" id="g-clock">0:00</span></div>
+        <div class="panel now"><span class="tag live" id="g-live"><i></i>Live</span><span class="tag" id="g-done" hidden>Full time</span><h2 id="g-title"></h2><span class="tag" id="g-dealt" hidden></span><span class="tag" id="g-speed"></span><span class="tag" id="g-phase" hidden></span><span class="clock" id="g-clock">0:00</span></div>
         <div class="panel">
           <div class="pl" id="pl1"><i style="background:var(--p1)"></i>
             <div style="min-width:0"><div class="seat" id="s1"></div><div class="n" id="n1"></div>
@@ -276,7 +276,7 @@ const CROWN = '<svg width="13" height="11" viewBox="0 0 24 20" fill="currentColo
 const store = { get(k) { try { return localStorage.getItem(k); } catch (e) { return null; } }, set(k, v) { try { v == null ? localStorage.removeItem(k) : localStorage.setItem(k, v); } catch (e) {} } };
 
 let S = null, ws = null, admin = false, hidden = false, key = store.get("cr-organiser-key"), tried = false;
-let bestOf = 1, seeding = "rating", speed = +(store.get("cr-tournament-speed") || 1), ending = false, wo = null, seenNotice = Date.now();
+let bestOf = 1, seeding = "rating", randomFrom = null, speed = +(store.get("cr-tournament-speed") || 1), ending = false, wo = null, seenNotice = Date.now();
 
 // ---------- the socket: one for the bracket, the live game and the organiser ----------
 function send(obj) { if (ws && ws.readyState === 1) ws.send(JSON.stringify(obj)); }
@@ -331,6 +331,7 @@ function renderOrg(ctl) {
   let h = `<b>Organiser</b>`;
   if (S.phase === "lobby") {
     h += `<span class="f">Each pairing ${seg("o-bo", [[1, "1 game"], [3, "Best of 3"], [5, "Best of 5"]], bestOf)}</span>
+      ${bestOf > 1 ? `<span class="f" title="From game 3 the server deals the decks: a different random deck for each player, except in the last game of the series, where both get the same one.">Decks ${seg("o-decks", [[null, "Their own"], [3, bestOf === 5 ? "2 own · 2 random · mirror decider" : "2 own · mirror decider"]], randomFrom)}</span>` : ""}
       <span class="f">Seeding ${seg("o-seed", [["rating", "By rating"], ["random", "Random"]], seeding)}</span>
       <button class="ib go" id="o-draw" type="button"${n < 2 || n > S.max ? " disabled" : ""}>Draw the bracket · ${n} agent${n === 1 ? "" : "s"}</button>
       ${n < 2 ? `<span class="hint">Needs at least two agents.</span>` : n > S.max ? `<span class="hint">At most ${S.max} agents; sit some out.</span>` : ""}
@@ -351,10 +352,10 @@ $("org").addEventListener("click", (e) => {
   const s = b.closest(".seg");
   if (s) {
     const v = b.dataset.v;
-    if (s.id === "o-bo") bestOf = +v; else if (s.id === "o-seed") seeding = v; else { speed = +v; store.set("cr-tournament-speed", String(speed)); }
+    if (s.id === "o-bo") { bestOf = +v; if (bestOf === 1) randomFrom = null; } else if (s.id === "o-decks") randomFrom = v === "null" ? null : +v; else if (s.id === "o-seed") seeding = v; else { speed = +v; store.set("cr-tournament-speed", String(speed)); }
     return render();
   }
-  if (b.id === "o-draw") send({ t: "admin", do: "draw", best_of: bestOf, seeding });
+  if (b.id === "o-draw") send({ t: "admin", do: "draw", best_of: bestOf, seeding, random_from: randomFrom });
   else if (b.id === "o-auto") send({ t: "admin", do: "auto", on: !S.auto });
   else if (b.id === "o-end") { ending = true; render(); }
   else if (b.id === "o-keep") { ending = false; render(); }
@@ -380,7 +381,7 @@ $("pool").addEventListener("click", (e) => { const b = e.target.closest("[data-e
 function renderBracket(ctl) {
   const all = S.rounds.flatMap((r) => r.pairings), left = all.filter((p) => p.winner == null).length;
   const n = new Set(all.flatMap((p) => p.players).filter(Boolean)).size;
-  $("bk-sub").textContent = `${n} agents · ${S.best_of === 1 ? "one game per pairing" : "best of " + S.best_of}` + (S.phase === "running" ? ` · ${left} pairing${left === 1 ? "" : "s"} to play` : "");
+  $("bk-sub").textContent = `${n} agents · ${S.best_of === 1 ? "one game per pairing" : "best of " + S.best_of}${S.random_from ? `, random decks from game ${S.random_from}, mirrored decider` : ""}` + (S.phase === "running" ? ` · ${left} pairing${left === 1 ? "" : "s"} to play` : "");
   $("bracket").innerHTML = S.rounds.map((r) => `<div class="round"><h3>${esc(r.name)}</h3><div class="cells">${r.pairings.map((p) => `<div class="cell">${pair(p, ctl)}</div>`).join("")}</div></div>`).join("");
 }
 function pair(p, ctl) {
@@ -393,7 +394,7 @@ function pair(p, ctl) {
     return `<div class="pr${done ? (p.winner === i ? " won" : " lost") : ""}"><span class="sd">${p.seeds[i] || ""}</span>
       <span class="nm">${!done && both ? `<i class="${p.online[i] ? "" : "off"}" title="${p.online[i] ? "Connected" : "Not connected"}"></i>` : ""}<span title="${esc(name)}">${esc(name)}</span></span><span class="sc">${sc}</span></div>`;
   };
-  const games = p.games.map((g, i) => `<a href="/replay?id=${g.match}" title="${g.winner == null ? "Drawn " : ""}${g.crowns[0]}–${g.crowns[1]}${g.forfeit ? ", forfeit" : ""}">${p.games.length === 1 && S.best_of === 1 ? "Replay" : "Game " + (i + 1)}</a>`).join(" ");
+  const games = p.games.map((g, i) => `<a href="/replay?id=${g.match}" title="${g.winner == null ? "Drawn " : ""}${g.crowns[0]}–${g.crowns[1]}${g.forfeit ? ", forfeit" : ""}${g.dealt === "mirror" ? ", mirrored random deck" : g.dealt ? ", random decks" : ""}">${p.games.length === 1 && S.best_of === 1 ? "Replay" : "Game " + (i + 1)}</a>`).join(" ");
   let foot;
   if (p.live) foot = `<span class="tag live"><i></i>Live</span><span>Game ${p.games.length + 1}</span>` + (G && G.pid === p.id && !G.over ? "" : `<span class="r"><button class="lk" type="button" data-watch="${p.id}">Watch</button></span>`);
   else if (bye) foot = `<span>Bye into the next round</span>`;
@@ -401,7 +402,8 @@ function pair(p, ctl) {
   else if (!both) foot = `<span>Waiting for the round before</span>`;
   else {
     const off = p.players.filter((_, i) => !p.online[i]);
-    const status = off.length ? `${esc(off.join(" and "))} not connected` : p.games.length ? `Game ${p.games.length + 1} next` : "Ready";
+    const gn = p.games.length + 1, rnd = !S.random_from || gn < S.random_from ? "" : gn >= S.best_of ? ", mirrored random deck" : ", random decks";
+    const status = off.length ? `${esc(off.join(" and "))} not connected` : p.games.length ? `Game ${p.games.length + 1} next${rnd}` : "Ready" + rnd;
     foot = `<span>${status}</span>${games}`;
     if (ctl) foot += wo === p.id
       ? `<span class="r"><button class="ib sm" type="button" data-wo="${p.id}" data-side="0">${esc(p.players[0])} goes through</button><button class="ib sm" type="button" data-wo="${p.id}" data-side="1">${esc(p.players[1])} goes through</button><button class="ib sm" type="button" data-wo-x>Cancel</button></span>`
@@ -450,7 +452,7 @@ function startGame(m) {
     $("d" + s).innerHTML = m["deck" + s].map((c) => `<span class="chip">${esc(cardName(c))}</span>`).join("");
   }
   $("g-speed").textContent = m.speed ? m.speed + "× speed" : "Fast";
-  $("g-speed").hidden = m.speed === 1;
+  $("g-speed").hidden = m.speed === 1; $("g-dealt").hidden = !m.dealt; $("g-dealt").textContent = m.dealt === "mirror" ? "Mirror · same random deck" : "Random decks";
   $("feed").innerHTML = `<li class="none">Nothing played yet.</li>`;
   board.configure(m.meta, m.towers.map((e) => ({ o: e[1], x: e[3], y: e[4], king: m.meta.cards[e[2]] === "king_tower", hw: e[7], hh: e[8] })));
   title(); resize(); render();

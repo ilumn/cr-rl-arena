@@ -13,6 +13,12 @@ Phases
 A pairing is decided by the first player to win `best_of // 2 + 1` games. A drawn
 game counts for nobody, so the pairing simply needs another game. Byes go to the
 top seeds and are settled as soon as the bracket is drawn.
+
+`random_from` is the game of a pairing from which the players are dealt random
+decks instead of their own. Each is dealt a different one, until the last game
+of the series, which is a mirror: both get the same random deck. So a best of 5
+with `random_from` 3 is two games on their own decks, two on different random
+decks, and a mirrored decider. None means every game is on the players' own.
 """
 from __future__ import annotations
 
@@ -44,7 +50,7 @@ class Tournament:
     def __init__(self, path: str, auto: bool = False):
         self.path = path
         self.d = {"phase": "lobby", "auto": bool(auto), "excluded": [], "best_of": 1, "seeding": "rating",
-                  "rounds": [], "champion": None, "drawn_at": None}
+                  "random_from": None, "rounds": [], "champion": None, "drawn_at": None}
         try:
             with open(path) as f:
                 saved = json.load(f)
@@ -81,6 +87,15 @@ class Tournament:
     def need(self) -> int:
         return self.d["best_of"] // 2 + 1
 
+    def dealt(self, p) -> str | None:
+        """How the decks for the next game of pairing `p` are chosen: None (the
+        players' own), "random" (a different random deck each) or "mirror" (the
+        same random deck for both: the last game of the series, and any after it)."""
+        start, n = self.d.get("random_from"), len(p["games"]) + 1
+        if start is None or n < start:
+            return None
+        return "mirror" if n >= self.d["best_of"] else "random"
+
     # ---- changing ----------------------------------------------------------
     def save(self):
         tmp = self.path + ".tmp"
@@ -101,12 +116,14 @@ class Tournament:
         self.d["excluded"] = sorted(ex)
         self.save()
 
-    def draw(self, entrants: list[str], best_of: int, seeding: str):
+    def draw(self, entrants: list[str], best_of: int, seeding: str, random_from: int | None = None):
         """Build the bracket. `entrants` are in seed order, best first."""
         if self.phase != "lobby":
             raise ValueError("a tournament is already under way")
         if best_of not in BEST_OF or seeding not in SEEDING:
             raise ValueError("unknown format")
+        if random_from is not None and (type(random_from) is not int or not 1 <= random_from <= best_of):
+            raise ValueError("random decks must start at a game of the series")
         if len(set(entrants)) != len(entrants):
             raise ValueError("two entrants share a name")
         if not 2 <= len(entrants) <= MAX_ENTRANTS:
@@ -127,7 +144,7 @@ class Tournament:
                 seed = order[2 * i + side]
                 if seed <= len(entrants):
                     p["players"][side], p["seeds"][side] = entrants[seed - 1], seed
-        self.d.update(phase="running", best_of=best_of, seeding=seeding, rounds=rounds,
+        self.d.update(phase="running", best_of=best_of, seeding=seeding, random_from=random_from, rounds=rounds,
                       champion=None, drawn_at=int(time.time() * 1000))
         for p in rounds[0]:
             if None in p["players"]:
@@ -190,6 +207,7 @@ class Tournament:
         n = len(self.d["rounds"])
         return {
             "phase": self.phase, "auto": self.auto, "best_of": self.d["best_of"], "seeding": self.d["seeding"],
+            "random_from": self.d.get("random_from"),
             "need": self.need(), "champion": self.d["champion"], "drawn_at": self.d["drawn_at"],
             "rounds": [{"name": round_name(n - 1 - i), "pairings": r} for i, r in enumerate(self.d["rounds"])],
         }

@@ -27,7 +27,8 @@ Protocol (JSON text frames)
         illegal deck is refused with {"t":"error","msg":...} and the socket closed)
         {"t":"leaderboard"}                      (query then close)
   S->C  {"t":"joined","name","rating"}
-        {"t":"start","opponent"}
+        {"t":"start","opponent"}                  (plus "deck":[8 names] when the server
+                                                  dealt this agent a deck for the game)
         {"t":"obs","obs":{...}}                   (every tick; reply required)
   C->S  {"t":"act","tick":obs.tick,"action":[slot,x,y]|null}
   S->C  {"t":"result","result":"win"|"loss"|"draw","crowns":[mine,theirs],
@@ -45,6 +46,7 @@ The tournament page talks to the server over the same socket (see `/tournament`)
         {"t":"focus","pid":str|null}              which live game to be sent (null: the newest)
         {"t":"auth","key":str}                    become the organiser
         {"t":"admin","do":"draw"|"run"|"walkover"|"reset"|"auto"|"exclude", ...}
+                                                  (draw: best_of, seeding, random_from)
   S->C  {"t":"state", ...}                        pool and bracket, on every change
         {"t":"live","pid","meta","p0","p1",...}   a game this spectator is now watching
         {"t":"frame","pid","f":[tick,crowns,elixir,entities],"ev":[deploys]}
@@ -245,6 +247,7 @@ class LiveGame:
     def __init__(self, arena, pairing, speed):
         self.arena, self.pid, self.speed = arena, pairing["id"], speed
         self.number = len(pairing["games"]) + 1
+        self.dealt = arena.tour.dealt(pairing)      # None: own decks; "random" or "mirror": dealt by the server
         self.header = None          # sent to a spectator before any frame
         self.last = None            # the newest frame (public, organiser's), for a spectator who arrives mid-game
         self.pending = []           # deploys since the last frame went out
@@ -272,7 +275,7 @@ class LiveGame:
             self.header = json.dumps({
                 "t": "live", "pid": self.pid, "meta": match.board_meta(cr_sim, self.cards),
                 "p0": a.name, "p1": c.name, "deck0": a.deck, "deck1": c.deck,
-                "speed": self.speed, "game": self.number,
+                "speed": self.speed, "game": self.number, "dealt": self.dealt,
                 "towers": [e for e in frame[3] if e[6] & 2],
             }, separators=(",", ":"))
             self.arena._announce(self)
@@ -449,6 +452,8 @@ class Arena:
             seed = random.getrandbits(63)
             for ag, opponent in ((a, b), (b, a)):
                 start = {"t": "start", "opponent": opponent.name}
+                if live is not None and live.dealt:
+                    start["deck"] = ag.deck         # not the one it joined with: say so
                 if not rated:
                     start.update(rated=False, realtime=True)
                 if ag.human:
@@ -621,7 +626,7 @@ class Arena:
                     return "no such agent"
                 self.tour.exclude(msg["name"], msg.get("on") is True)
             elif do == "draw":
-                return self._draw(msg.get("best_of"), msg.get("seeding"))
+                return self._draw(msg.get("best_of"), msg.get("seeding"), msg.get("random_from"))
             elif do == "run":
                 return self._run_pairing(msg.get("pid"), msg.get("speed"))
             elif do == "walkover":
@@ -637,16 +642,25 @@ class Arena:
             self._changed()
         return None
 
-    def _draw(self, best_of, seeding) -> str | None:
+    def _random_deck(self) -> list[str]:
+        """Eight cards at random that make a legal deck."""
+        cards = self._deck_checker.deployable_cards()
+        while True:
+            deck = random.sample(cards, 8)
+            if self._deck_problem(deck) is None:
+                return deck
+
+    def _draw(self, best_of, seeding, random_from=None) -> str | None:
         excluded = set(self.tour.d["excluded"])
         names = [n for n, ags in self.agents.items() if n not in excluded and any(ag.alive for ag in ags)]
         if seeding == "random":
             random.shuffle(names)
         else:
             names.sort(key=lambda n: (-self.board.get(n).rating, n))
-        self.tour.draw(names, best_of, seeding)
+        self.tour.draw(names, best_of, seeding, random_from)
         self.notice = None
-        print(f"[tournament] bracket drawn: {len(names)} entrants, best of {best_of}, {seeding} seeding")
+        print(f"[tournament] bracket drawn: {len(names)} entrants, best of {best_of}, {seeding} seeding"
+              + (f", random decks from game {random_from}" if random_from else ""))
         return None
 
     def _run_pairing(self, pid, speed) -> str | None:
@@ -676,12 +690,19 @@ class Arena:
     async def _tournament_game(self, p, agents, game: LiveGame):
         pid = p["id"]
         pace = 1 / (cr_sim.TICKS_PER_SECOND * game.speed) if game.speed else 0.0
+        own = [ag.deck for ag in agents]
+        if game.dealt:                          # for this game only
+            mirror = self._random_deck()
+            for ag in agents:
+                ag.deck = list(mirror) if game.dealt == "mirror" else self._random_deck()
         try:
             out = await self._play(*agents, live=game, pace=pace)
         except BaseException:
             out = {"void": "the server could not finish the game"}
             raise
         finally:
+            for ag, deck in zip(agents, own):
+                ag.deck = deck
             self.games.pop(pid, None)
             if self.featured == pid:
                 self.featured = next(reversed(self.games), None)
@@ -691,7 +712,8 @@ class Arena:
                 self._say(f"{p['players'][0]} vs {p['players'][1]}: game void, {out['void']}. Nothing was recorded.")
             else:
                 crowns = out["crowns"] if out["p0"] == p["players"][0] else out["crowns"][::-1]
-                self.tour.record(pid, out["winner"], {"match": out["match"], "crowns": crowns, "forfeit": out["forfeit"]})
+                self.tour.record(pid, out["winner"], {"match": out["match"], "crowns": crowns,
+                                                      "forfeit": out["forfeit"], "dealt": game.dealt})
                 over = {"t": "over", "pid": pid, "match": out["match"], "winner": out["winner"],
                         "crowns": out["crowns"], "forfeit": out["forfeit"], "wins": p["wins"],
                         "decided": p["winner"] is not None,

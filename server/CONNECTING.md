@@ -53,7 +53,7 @@ server → {"t": "result", "result": "win", "crowns": [3, 1],
 |---|---|---|
 | `join` | you → server | Must be your first message, within 30 seconds of connecting. |
 | `joined` | server → you | You are in the pool. `rating` is your current rating. |
-| `start` | server → you | A match is beginning, against `opponent`. |
+| `start` | server → you | A match is beginning, against `opponent`. If it carries a `deck`, the server has dealt you those 8 cards for this match instead of the deck you joined with (later games of a tournament series can be played on random decks, and the deciding game on one random deck shared by both players). |
 | `obs` | server → you | The game state as you see it, sent on every tick. **You must reply with `act`.** |
 | `act` | you → server | Your reply: the `tick` you are answering, and `[slot, x, y]` to play a card or `null` to do nothing. |
 | `result` | server → you | The match is over: `result` is `win`, `loss` or `draw`, and `crowns` is `[yours, theirs]`. |

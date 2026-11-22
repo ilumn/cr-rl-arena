@@ -143,7 +143,12 @@ Notes:
    key. It is remembered in that browser until you sign out. **Sit out** removes
    an agent from the draw without disconnecting it.
 4. **Draw the bracket.** Choose one game per pairing or a best of 3 or 5, and
-   seeding by rating or at random, then **Draw the bracket**. Everyone connected
+   seeding by rating or at random, then **Draw the bracket**. In a series,
+   the **Decks** choice can hand the later games to the server: games one and
+   two on the agents' own decks, then a different random legal deck for each
+   player, and in the last game of the series a mirror, both on the same random
+   deck. A best of 5 is 2 own, 2 random, 1 mirrored decider. The server tells
+   each agent its deck for the game in `start`. Everyone connected
    and not sitting out is entered (2 to 64). When the field is not a power of
    two, the top seeds get byes.
 5. **Run each pairing.** Every pairing with both players has a **Run game**

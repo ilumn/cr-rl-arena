@@ -56,6 +56,19 @@ def test_byes_go_to_the_top_seeds_and_winners_advance(tmp_path):
     assert again.phase == "lobby" and again.d["rounds"] == []
 
 
+def test_later_games_of_a_series_can_be_dealt_random_decks(tmp_path):
+    t = Tournament(str(tmp_path / "t.json"))
+    with pytest.raises(ValueError):
+        t.draw(["a", "b"], 3, "rating", random_from=4)
+    t.draw(["a", "b"], 5, "rating", random_from=3)
+    p, seen = t.pairing("0-0"), []
+    for winner in ("a", "b", None, "a", "a"):                # the drawn third game still counts as game three
+        seen.append(t.dealt(p))
+        t.record("0-0", winner, {"match": 1, "crowns": [1, 0], "forfeit": False})
+    assert seen == [None, None, "random", "random", "mirror"] and t.phase == "done"
+    assert Tournament(str(tmp_path / "t.json")).snapshot()["random_from"] == 3
+
+
 def test_a_series_needs_a_majority_of_its_games(tmp_path):
     t = Tournament(str(tmp_path / "t.json"))
     t.draw(["a", "b"], 3, "random")
@@ -96,7 +109,7 @@ def test_a_paced_game_takes_at_least_its_time():
 # The whole thing over real sockets
 # ---------------------------------------------------------------------------
 
-async def _agent(url, name, games):
+async def _agent(url, name, games, starts=None):
     """Join the pool and answer every observation until the socket is closed."""
     bot = Bot(sum(map(ord, name)), name)
     async with websockets.connect(url) as ws:
@@ -108,6 +121,8 @@ async def _agent(url, name, games):
                     await ws.send(json.dumps({"t": "act", "tick": m["obs"]["tick"], "action": bot.choose(m["obs"])}))
                 elif m["t"] in ("start", "result"):
                     games.append((name, m["t"]))
+                    if starts is not None and m["t"] == "start":
+                        starts.append(m)
         except websockets.ConnectionClosed:
             pass
 
@@ -290,3 +305,51 @@ def test_the_open_ladder_is_a_switch_the_organiser_holds(tmp_path, monkeypatch):
 
     asyncio.run(main())
     assert Tournament(str(tmp_path / "tournament.json")).auto is False
+
+
+def test_random_decks_are_dealt_told_and_put_back(tmp_path, monkeypatch):
+    monkeypatch.setattr(server, "DATA_DIR", str(tmp_path))
+    monkeypatch.setattr(server, "ADMIN_KEY", KEY)
+    games, starts = [], []
+
+    async def main():
+        arena = server.Arena()
+        async with websockets.serve(arena.handler, "127.0.0.1", 0) as srv:
+            url = f"ws://127.0.0.1:{srv.sockets[0].getsockname()[1]}"
+            bots = [asyncio.create_task(_agent(url, n, games, starts)) for n in ("ada", "bo")]
+            async with websockets.connect(url) as ws:
+                page = Page(ws)
+                await ws.send(json.dumps({"t": "watch"}))
+                await page.until(lambda m: m["t"] == "state" and len(m["pool"]) == 2)
+                await ws.send(json.dumps({"t": "auth", "key": KEY}))
+                assert (await page.do(do="draw", best_of=3, seeding="rating", random_from=2))["ok"]
+                for n in (1, 2, 3):
+                    await page.until(lambda m: m["t"] == "state" and m["phase"] != "lobby" and not m["live"])
+                    if page.state["phase"] == "done":
+                        break
+                    assert (await page.do(do="run", pid="0-0", speed=0))["ok"]
+                    live = await page.until(lambda m: m["t"] == "live")
+                    assert live["dealt"] == [None, "random", "mirror"][n - 1]
+                    await page.until(lambda m: m["t"] == "over")
+                # everyone has its own deck back once the game is over
+                await page.until(lambda m: m["t"] == "state" and not m["live"])
+                assert all(e["deck"] == DECK for e in page.state["pool"])
+            for b in bots:
+                b.cancel()
+            await asyncio.gather(*bots, return_exceptions=True)
+        return arena
+
+    arena = asyncio.run(main())
+    first, later = starts[:2], starts[2:]
+    assert all("deck" not in m for m in first) and later
+    for m in later:
+        assert len(set(m["deck"])) == 8 and m["deck"] != DECK
+        cr_sim.Battle().check_deck(m["deck"])
+    assert later[0]["deck"] != later[1]["deck"]            # game two: a different random deck each
+    if len(later) == 4:
+        assert later[2]["deck"] == later[3]["deck"]        # the decider: one deck for both
+    # what was dealt is what was played and saved, so the replay is the real game
+    rec = json.loads((tmp_path / "replays" / "00000002.json").read_text())
+    assert {tuple(rec["deck0"]), tuple(rec["deck1"])} == {tuple(m["deck"]) for m in later[:2]}
+    assert match.trace(cr_sim, rec)["meta"]["faithful"]
+    assert arena.tour.pairing("0-0")["games"][1]["dealt"] == "random"
