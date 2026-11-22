@@ -1,0 +1,542 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="dark">
+<title>Tournament · CR Arena</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Crect width='24' height='24' rx='6' fill='%23ffb829'/%3E%3Cpath d='M5 9l3.5 3L12 7l3.5 5L19 9l-1.2 7.4H6.2z' fill='%231a1200'/%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root {
+    color-scheme: dark;
+    --bg: #090b10; --bg-2: #0e1118; --panel: #12161f; --panel-2: #171c27;
+    --line: #222938; --line-2: #2c3446; --row: #1a1f2b;
+    --fg: #eef1f7; --fg-2: #b9c0d0; --muted: #7d879c; --faint: #566076;
+    --gold: #ffb829; --win: #3ddc97; --loss: #ff6166; --draw: #8f9ab3;
+    --p0: #5aa8ff; --p1: #ff6f91; --elixir: #d95fd0;
+    --disp: "Barlow Condensed", "Arial Narrow", system-ui, sans-serif;
+    --body: Inter, system-ui, -apple-system, "Segoe UI", sans-serif;
+    --r: 14px; --gap: 44px;
+  }
+  * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
+  html { background: var(--bg); }
+  body { margin: 0; color: var(--fg); font: 14px/1.45 var(--body); font-feature-settings: "tnum"; -webkit-font-smoothing: antialiased; min-height: 100vh;
+    background: radial-gradient(1200px 520px at 78% -160px, rgba(255,184,41,.10), transparent 62%), radial-gradient(900px 480px at 0% -120px, rgba(90,168,255,.09), transparent 60%), var(--bg); }
+  button, input { font: inherit; color: inherit; }
+  a { color: inherit; text-decoration: none; }
+  :focus-visible { outline: 2px solid var(--gold); outline-offset: 2px; border-radius: 6px; }
+  .wrap { max-width: 1400px; margin: 0 auto; padding-block: 18px 48px; padding-left: max(28px, env(safe-area-inset-left, 0px)); padding-right: max(28px, env(safe-area-inset-right, 0px)); }
+  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: var(--r); }
+  h1, h2, h3 { margin: 0; font-family: var(--disp); text-transform: uppercase; letter-spacing: .06em; line-height: 1.05; }
+
+  /* ---------- top bar ---------- */
+  .bar { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 18px; min-height: 36px; }
+  .back { display: inline-flex; align-items: center; gap: 7px; color: var(--muted); font-weight: 600; font-size: 13px; padding: 6px 10px 6px 6px; margin-left: -6px; border-radius: 8px; }
+  .back:hover { color: var(--fg); background: rgba(255,255,255,.04); }
+  .bar h1 { font-size: 26px; font-weight: 600; }
+  .pill { font: 700 10.5px/1 var(--body); letter-spacing: .1em; text-transform: uppercase; padding: 5px 8px; border-radius: 6px; white-space: nowrap; background: rgba(143,154,179,.16); color: var(--draw); }
+  .pill.open { background: rgba(61,220,151,.14); color: var(--win); } .pill.run { background: rgba(255,184,41,.15); color: var(--gold); }
+  .pill.off { background: rgba(255,97,102,.13); color: var(--loss); }
+  .sp { flex: 1; }
+  .ib { display: inline-flex; align-items: center; gap: 7px; height: 34px; padding: 0 12px; border: 1px solid var(--line-2); background: var(--panel); border-radius: 9px; font-weight: 600; font-size: 12.5px; color: var(--fg-2); cursor: pointer; white-space: nowrap; }
+  .ib:hover:not(:disabled) { border-color: var(--gold); color: var(--gold); }
+  .ib:disabled { opacity: .4; cursor: default; }
+  .ib.on { color: var(--gold); border-color: rgba(255,184,41,.5); }
+  .go { background: var(--gold); border-color: var(--gold); color: #1a1200; }
+  .go:hover:not(:disabled) { color: #1a1200; filter: brightness(1.08); }
+  .danger:hover:not(:disabled) { border-color: var(--loss); color: var(--loss); }
+
+  /* ---------- organiser ---------- */
+  .unlock { position: relative; }
+  .pop { position: absolute; right: 0; top: 42px; z-index: 30; width: min(320px, 86vw); padding: 16px; box-shadow: 0 18px 50px rgba(0,0,0,.55); }
+  .pop h3 { font-size: 17px; margin-bottom: 4px; }
+  .pop p { margin: 0 0 12px; color: var(--muted); font-size: 12.5px; }
+  .pop form { display: flex; gap: 8px; }
+  .pop input { flex: 1; min-width: 0; height: 34px; padding: 0 10px; border-radius: 9px; border: 1px solid var(--line-2); background: var(--bg-2); }
+  .pop input:focus { outline: none; border-color: var(--gold); }
+  .pop .err { color: var(--loss); margin: 10px 0 0; }
+  .org { display: flex; align-items: center; gap: 10px 18px; flex-wrap: wrap; padding: 12px 16px; margin-bottom: 18px; border-color: rgba(255,184,41,.35); background: linear-gradient(90deg, rgba(255,184,41,.07), transparent 60%), var(--panel); }
+  .org > b { font: 600 16px/1 var(--disp); letter-spacing: .09em; text-transform: uppercase; color: var(--gold); }
+  .org .f { display: inline-flex; align-items: center; gap: 8px; color: var(--muted); font-size: 12.5px; font-weight: 600; }
+  .org .hint { color: var(--muted); font-size: 12.5px; }
+  .seg { display: inline-flex; border: 1px solid var(--line-2); border-radius: 9px; overflow: hidden; }
+  .seg button { border: 0; background: transparent; padding: 7px 11px; font-weight: 600; font-size: 12.5px; color: var(--muted); cursor: pointer; }
+  .seg button[aria-pressed="true"] { background: var(--panel-2); color: var(--gold); }
+  .sw { flex: none; position: relative; width: 36px; height: 20px; border-radius: 99px; border: 0; background: #2a3142; cursor: pointer; transition: background .15s; }
+  .sw::after { content: ""; position: absolute; top: 3px; left: 3px; width: 14px; height: 14px; border-radius: 50%; background: #fff; transition: transform .15s; }
+  .sw[aria-checked="true"] { background: var(--gold); } .sw[aria-checked="true"]::after { transform: translateX(16px); }
+
+  /* ---------- lobby ---------- */
+  .hero { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 24px; align-items: end; padding: 30px 28px; margin-bottom: 18px;
+    background: radial-gradient(600px 240px at 0% 0%, rgba(61,220,151,.10), transparent 70%), var(--panel); }
+  .hero h2 { font-size: clamp(38px, 6vw, 68px); font-weight: 700; letter-spacing: .02em; }
+  .hero p { margin: 10px 0 0; color: var(--fg-2); max-width: 60ch; }
+  .hero .n { text-align: right; }
+  .hero .n b { display: block; font: 700 clamp(60px, 9vw, 108px)/.85 var(--disp); color: var(--gold); }
+  .hero .n span { color: var(--muted); font-weight: 600; letter-spacing: .1em; text-transform: uppercase; font-size: 11.5px; }
+  .join { margin-top: 16px; display: flex; flex-wrap: wrap; gap: 8px 10px; align-items: center; color: var(--muted); font-size: 12.5px; }
+  code { font: 500 12.5px/1.2 ui-monospace, "SF Mono", Menlo, Consolas, monospace; background: var(--bg-2); border: 1px solid var(--line-2); padding: 6px 9px; border-radius: 7px; color: #ffd98a; overflow-wrap: anywhere; }
+  .pool { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 12px; }
+  .ag { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 12px; align-items: center; padding: 14px 16px; }
+  .ag.out { opacity: .5; }
+  .av { position: relative; width: 40px; height: 40px; border-radius: 11px; display: grid; place-items: center; font: 700 17px/1 var(--disp); letter-spacing: .03em;
+    background: hsl(var(--h) 55% 22%); color: hsl(var(--h) 85% 78%); border: 1px solid hsl(var(--h) 50% 34%); }
+  .av::after { content: ""; position: absolute; right: -3px; bottom: -3px; width: 10px; height: 10px; border-radius: 50%; background: var(--win); border: 2px solid var(--panel); }
+  .av.busy::after { background: var(--gold); }
+  .ag b { display: block; font-size: 15px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .ag small { display: block; color: var(--muted); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; text-transform: capitalize; }
+  .ag .rt { font: 600 22px/1 var(--disp); color: var(--fg-2); text-align: right; }
+  .ag .rt span { display: block; font: 600 9.5px/1 var(--body); letter-spacing: .1em; text-transform: uppercase; color: var(--faint); margin-top: 4px; }
+  .ag .ib { grid-column: 1 / -1; justify-content: center; height: 30px; }
+  .empty { padding: 44px 24px; text-align: center; color: var(--muted); }
+  .empty b { display: block; font: 600 24px/1.1 var(--disp); letter-spacing: .04em; text-transform: uppercase; color: var(--fg-2); margin-bottom: 8px; }
+
+  /* ---------- champion ---------- */
+  .champ { display: flex; align-items: center; gap: 22px; padding: 26px 28px; margin-bottom: 18px; border-color: rgba(255,184,41,.45);
+    background: radial-gradient(520px 220px at 0% 50%, rgba(255,184,41,.18), transparent 70%), var(--panel); }
+  .champ svg { flex: none; color: var(--gold); filter: drop-shadow(0 0 18px rgba(255,184,41,.45)); }
+  .champ span { font: 600 12px/1 var(--body); letter-spacing: .16em; text-transform: uppercase; color: var(--gold); }
+  .champ b { display: block; font: 700 clamp(40px, 7vw, 84px)/.95 var(--disp); letter-spacing: .01em; overflow-wrap: anywhere; margin-top: 6px; }
+
+  /* ---------- live stage ---------- */
+  .stage { display: grid; grid-template-columns: auto minmax(0, 620px); gap: 20px; align-items: start; justify-content: center; margin-bottom: 22px; }
+  .board { position: relative; border-radius: var(--r); overflow: hidden; border: 1px solid var(--line-2); background: #1f4329; line-height: 0; box-shadow: 0 18px 50px rgba(0,0,0,.45); }
+  canvas { display: block; }
+  .over { position: absolute; inset: 0; display: grid; place-items: center; background: rgba(9,11,16,.74); backdrop-filter: blur(3px); line-height: 1.4; text-align: center; padding: 24px; animation: in .3s ease-out; }
+  @keyframes in { from { opacity: 0; transform: translateY(6px); } }
+  .over small { display: block; font: 700 11px/1 var(--body); letter-spacing: .16em; text-transform: uppercase; color: var(--gold); margin-bottom: 10px; }
+  .over b { display: block; font: 700 clamp(34px, 5vw, 54px)/1 var(--disp); letter-spacing: .03em; text-transform: uppercase; overflow-wrap: anywhere; }
+  .over span { display: block; color: var(--fg-2); margin: 10px 0 16px; }
+  .side { display: grid; gap: 14px; min-width: 0; }
+  .now { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; padding: 14px 18px; }
+  .now h2 { font-size: 22px; font-weight: 600; }
+  .now .clock { margin-left: auto; font: 600 34px/1 var(--disp); letter-spacing: .02em; }
+  .tag { font: 700 10px/1 var(--body); letter-spacing: .1em; text-transform: uppercase; padding: 4px 7px; border-radius: 5px; white-space: nowrap; background: rgba(143,154,179,.16); color: var(--draw); }
+  .tag.live { background: rgba(255,97,102,.16); color: var(--loss); display: inline-flex; align-items: center; gap: 6px; }
+  .tag.live i { width: 6px; height: 6px; border-radius: 50%; background: var(--loss); animation: blink 1.2s ease-in-out infinite; }
+  @keyframes blink { 50% { opacity: .25; } }
+  .tag.x2 { background: rgba(217,95,208,.14); color: #ee8ae6; } .tag.ot { background: rgba(255,97,102,.14); color: var(--loss); }
+  .pl { display: grid; grid-template-columns: 4px minmax(0, 1fr) auto; gap: 14px; align-items: center; padding: 16px 18px; }
+  .pl + .pl { border-top: 1px solid var(--row); }
+  .pl > i { width: 4px; align-self: stretch; border-radius: 3px; }
+  .pl .seat { font: 600 10.5px/1 var(--body); letter-spacing: .12em; text-transform: uppercase; color: var(--muted); }
+  .pl .n { font: 600 clamp(26px, 3vw, 38px)/1.05 var(--disp); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-top: 5px; }
+  .pl .cr { display: flex; align-items: center; gap: 10px; }
+  .pl .cr b { font: 700 clamp(48px, 5vw, 68px)/.9 var(--disp); color: var(--muted); min-width: 28px; text-align: right; }
+  .pl.lead .cr b { color: var(--gold); }
+  .pips { display: grid; gap: 3px; } .pips svg { display: block; color: #2a3142; } .pips svg.on { color: var(--gold); }
+  .elx { display: flex; align-items: center; gap: 8px; margin-top: 10px; }
+  .elx .bars { flex: 1; display: grid; grid-template-columns: repeat(10, 1fr); gap: 2px; height: 9px; max-width: 280px; }
+  .elx .bars span { border-radius: 2px; background: #232a39; overflow: hidden; }
+  .elx .bars span i { display: block; height: 100%; width: var(--f, 0%); background: linear-gradient(180deg, #ee8ae6, var(--elixir)); }
+  .elx b { font: 600 16px/1 var(--disp); color: var(--elixir); min-width: 22px; }
+  .chips { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 10px; }
+  .chip { padding: 3px 7px; border-radius: 6px; background: var(--panel-2); border: 1px solid var(--line-2); font-size: 11px; color: var(--fg-2); text-transform: capitalize; }
+  .ph { display: flex; align-items: center; gap: 10px; padding: 13px 18px; border-bottom: 1px solid var(--line); }
+  .ph h2 { font-size: 18px; font-weight: 600; letter-spacing: .09em; }
+  .feed { list-style: none; margin: 0; padding: 4px 0; min-height: 40px; }
+  .feed li { display: grid; grid-template-columns: 44px 3px minmax(0, 1fr); gap: 10px; align-items: center; padding: 5px 18px; font-size: 13px; animation: in .25s ease-out; }
+  .feed .t { color: var(--muted); } .feed i { width: 3px; height: 14px; border-radius: 2px; }
+  .feed .c { text-transform: capitalize; color: var(--fg-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .feed li.none { display: block; padding: 12px 18px; color: var(--muted); animation: none; }
+
+  /* ---------- bracket ---------- */
+  .bk-head { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; margin: 4px 0 12px; }
+  .bk-head h2 { font-size: 22px; font-weight: 600; }
+  .bk-head span { color: var(--muted); font-size: 12.5px; }
+  .scroll { overflow-x: auto; padding: 4px 4px 10px; margin: 0 -4px; scrollbar-width: thin; scrollbar-color: var(--line-2) transparent; }
+  .bracket { display: flex; gap: var(--gap); min-width: min-content; }
+  .round { flex: 1 0 252px; max-width: 360px; display: flex; flex-direction: column; }
+  .round h3 { font-size: 13px; font-weight: 600; letter-spacing: .14em; color: var(--muted); padding: 0 2px 10px; }
+  .cells { flex: 1; display: flex; flex-direction: column; }
+  .cell { position: relative; flex: 1; display: flex; align-items: center; padding: 7px 0; }
+  .round:not(:last-child) .cell::after { content: ""; position: absolute; right: calc(var(--gap) / -2); width: calc(var(--gap) / 2); border: 2px solid var(--line-2); border-left: 0; }
+  .round:not(:last-child) .cell:nth-child(odd)::after { top: 50%; height: 50%; border-bottom: 0; border-top-right-radius: 8px; }
+  .round:not(:last-child) .cell:nth-child(even)::after { bottom: 50%; height: 50%; border-top: 0; border-bottom-right-radius: 8px; }
+  .round:not(:first-child) .cell::before { content: ""; position: absolute; left: calc(var(--gap) / -2); width: calc(var(--gap) / 2); top: 50%; border-top: 2px solid var(--line-2); }
+  .pair { width: 100%; overflow: hidden; transition: border-color .2s, box-shadow .2s; }
+  .pair.ready { border-color: var(--line-2); }
+  .pair.live { border-color: rgba(255,97,102,.6); box-shadow: 0 0 0 3px rgba(255,97,102,.12); }
+  .pair.bye { opacity: .55; }
+  .pr { display: grid; grid-template-columns: 22px minmax(0, 1fr) auto; gap: 8px; align-items: center; padding: 9px 12px 9px 10px; }
+  .pr + .pr { border-top: 1px solid var(--row); }
+  .pr .sd { font: 600 11px/1 var(--body); color: var(--faint); text-align: center; }
+  .pr .nm { display: flex; align-items: center; gap: 7px; min-width: 0; font-size: 14.5px; color: var(--fg-2); }
+  .pr .nm span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .pr .nm i { flex: none; width: 7px; height: 7px; border-radius: 50%; background: var(--win); }
+  .pr .nm i.off { background: var(--loss); }
+  .pr .sc { font: 600 22px/1 var(--disp); color: var(--muted); min-width: 14px; text-align: right; }
+  .pr.won .nm { color: var(--fg); font-weight: 600; } .pr.won .sc { color: var(--gold); }
+  .pr.lost .nm { color: var(--faint); }
+  .pr.tbd .nm { color: var(--faint); font-style: italic; } .pr.tbd .nm span { padding-right: 4px; }
+  .pf { display: flex; align-items: center; gap: 6px 8px; flex-wrap: wrap; padding: 8px 10px; border-top: 1px solid var(--row); background: var(--bg-2); color: var(--muted); font-size: 11.5px; min-height: 36px; }
+  .pf a, .pf .lk { color: var(--fg-2); font: inherit; font-weight: 600; cursor: pointer; background: none; border: 0; border-bottom: 1px dotted var(--faint); padding: 0; }
+  .pf a:hover, .pf .lk:hover { color: var(--gold); }
+  .pf .r { margin-left: auto; display: inline-flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
+  .sm { height: 28px; padding: 0 10px; font-size: 12px; border-radius: 8px; }
+
+  .toast { position: fixed; left: 50%; bottom: max(24px, env(safe-area-inset-bottom, 0px)); transform: translateX(-50%); z-index: 50; width: max-content; max-width: min(560px, 92vw); padding: 12px 16px; border-radius: 11px;
+    background: #05070b; border: 1px solid var(--loss); color: var(--fg); box-shadow: 0 12px 40px rgba(0,0,0,.6); }
+
+  body.present .bar .back, body.present .join { display: none; }
+  @media (max-width: 900px) {
+    .wrap { padding-block: 12px 36px; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); }
+    .stage { grid-template-columns: minmax(0, 1fr); } .board { justify-self: center; } .side { max-width: none; }
+    .hero { grid-template-columns: minmax(0, 1fr); padding: 22px 20px; } .hero .n { text-align: left; }
+    .champ { padding: 20px; gap: 14px; } .champ svg { width: 54px; height: 46px; }
+    .ib .lbl { display: none; }
+  }
+  @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; transition: none !important; } }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="bar">
+    <a class="back" href="/"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 6l-6 6 6 6"/></svg>Standings</a>
+    <h1>Tournament</h1>
+    <span class="pill" id="phase">Connecting</span>
+    <span class="pill off" id="conn" hidden>Reconnecting</span>
+    <span class="sp"></span>
+    <button class="ib" id="full" type="button" title="Fill the screen, for a projector"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg><span class="lbl">Full screen</span></button>
+    <div class="unlock">
+      <button class="ib" id="org-b" type="button" aria-expanded="false"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg><span class="lbl" id="org-l">Organiser</span></button>
+      <div class="panel pop" id="pop" hidden>
+        <h3>Organiser</h3>
+        <p>Enter the organiser key to draw the bracket and start games. It is the server's <b>CR_ADMIN_KEY</b>, or the one printed in its log at startup.</p>
+        <form id="key-f"><input id="key" type="password" autocomplete="off" aria-label="Organiser key" placeholder="Key"><button class="ib go" type="submit">Unlock</button></form>
+        <p class="err" id="key-e" hidden>That key was not accepted.</p>
+      </div>
+    </div>
+  </header>
+
+  <section class="panel org" id="org" aria-label="Organiser controls" hidden></section>
+
+  <main>
+    <section id="lobby" hidden>
+      <div class="panel hero">
+        <div>
+          <h2>Enrolment is open</h2>
+          <p>Start your agent and it joins the pool by itself. Nothing is played until the organiser draws the bracket and starts each pairing.</p>
+          <div class="join"><span>Point your agent at</span><code id="ws"></code></div>
+        </div>
+        <div class="n"><b id="pool-n">0</b><span id="pool-l">agents in the pool</span></div>
+      </div>
+      <div class="pool" id="pool"></div>
+    </section>
+
+    <section class="panel champ" id="champ" hidden>
+      <svg width="84" height="70" viewBox="0 0 24 20" fill="currentColor" aria-hidden="true"><path d="M2 5l5 4.5L12 2l5 7.5L22 5l-2 13H4z"/></svg>
+      <div style="min-width:0"><span>Champion</span><b id="champ-n"></b></div>
+    </section>
+
+    <section class="stage" id="stage" aria-label="Live game" hidden>
+      <div class="board"><canvas id="cv" aria-label="Arena"></canvas>
+        <div class="over" id="over" hidden><div><small id="over-k"></small><b id="over-t"></b><span id="over-s"></span><a class="ib" id="over-r" hidden>Watch the replay</a></div></div>
+      </div>
+      <div class="side">
+        <div class="panel now"><span class="tag live" id="g-live"><i></i>Live</span><span class="tag" id="g-done" hidden>Full time</span><h2 id="g-title"></h2><span class="tag" id="g-speed"></span><span class="tag" id="g-phase" hidden></span><span class="clock" id="g-clock">0:00</span></div>
+        <div class="panel">
+          <div class="pl" id="pl1"><i style="background:var(--p1)"></i>
+            <div style="min-width:0"><div class="seat" id="s1"></div><div class="n" id="n1"></div>
+              <div class="elx" id="x1" hidden><div class="bars" id="e1"></div><b id="ev1"></b></div><div class="chips" id="d1"></div></div>
+            <div class="cr"><div class="pips" id="k1" aria-hidden="true"></div><b id="c1">0</b></div></div>
+          <div class="pl" id="pl0"><i style="background:var(--p0)"></i>
+            <div style="min-width:0"><div class="seat" id="s0"></div><div class="n" id="n0"></div>
+              <div class="elx" id="x0" hidden><div class="bars" id="e0"></div><b id="ev0"></b></div><div class="chips" id="d0"></div></div>
+            <div class="cr"><div class="pips" id="k0" aria-hidden="true"></div><b id="c0">0</b></div></div>
+        </div>
+        <div class="panel"><div class="ph"><h2>Cards played</h2></div><ol class="feed" id="feed"></ol></div>
+      </div>
+    </section>
+
+    <section id="bk" hidden>
+      <div class="bk-head"><h2>Bracket</h2><span id="bk-sub"></span></div>
+      <div class="scroll"><div class="bracket" id="bracket"></div></div>
+    </section>
+  </main>
+</div>
+<div class="toast" id="toast" role="status" hidden></div>
+
+<script src="/arena.js"></script>
+<script>
+"use strict";
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+const cap = (s) => s ? s[0].toUpperCase() + s.slice(1) : s;
+const cardName = (c) => String(c).replace(/_/g, " ");
+const clock = (ticks, tps) => { const s = Math.floor(ticks / tps); return Math.floor(s / 60) + ":" + String(s % 60).padStart(2, "0"); };
+const hue = (name) => { let h = 0; for (const c of name) h = (h * 31 + c.charCodeAt(0)) >>> 0; return h % 360; };
+const initials = (name) => (name.match(/[A-Za-z0-9]/g) || ["?"]).slice(0, 2).join("").toUpperCase();
+const P = ["#5aa8ff", "#ff6f91"];
+const CROWN = '<svg width="13" height="11" viewBox="0 0 24 20" fill="currentColor"><path d="M2 5l5 4.5L12 2l5 7.5L22 5l-2 13H4z"/></svg>';
+const store = { get(k) { try { return localStorage.getItem(k); } catch (e) { return null; } }, set(k, v) { try { v == null ? localStorage.removeItem(k) : localStorage.setItem(k, v); } catch (e) {} } };
+
+let S = null, ws = null, admin = false, hidden = false, key = store.get("cr-organiser-key"), tried = false;
+let bestOf = 1, seeding = "rating", speed = +(store.get("cr-tournament-speed") || 1), ending = false, wo = null, seenNotice = Date.now();
+
+// ---------- the socket: one for the bracket, the live game and the organiser ----------
+function send(obj) { if (ws && ws.readyState === 1) ws.send(JSON.stringify(obj)); }
+function connect() {
+  ws = new WebSocket((location.protocol === "https:" ? "wss://" : "ws://") + location.host);
+  ws.onopen = () => { $("conn").hidden = true; send({ t: "watch" }); if (key) send({ t: "auth", key }); };
+  ws.onmessage = (e) => {
+    const m = JSON.parse(e.data);
+    if (m.t === "state") { S = m; render(); }
+    else if (m.t === "live") startGame(m);
+    else if (m.t === "frame") { if (G && G.pid === m.pid) addFrame(m); }
+    else if (m.t === "over") endGame(m);
+    else if (m.t === "auth") {
+      admin = m.ok;
+      if (m.ok) { store.set("cr-organiser-key", key); $("pop").hidden = true; $("key").value = ""; }
+      else { key = null; store.set("cr-organiser-key", null); if (tried) { $("key-e").hidden = false; $("pop").hidden = false; } }
+      tried = false; render();
+    }
+    else if (m.t === "admin") { if (!m.ok) toast(cap(m.msg) + "."); }
+    else if (m.t === "error") toast(m.msg);
+  };
+  ws.onclose = () => { admin = false; $("conn").hidden = false; render(); setTimeout(connect, 1500); };
+}
+let toastT = 0;
+function toast(text) { const el = $("toast"); el.textContent = text; el.hidden = false; clearTimeout(toastT); toastT = setTimeout(() => { el.hidden = true; }, 6000); }
+
+// ---------- the page ----------
+function render() {
+  if (!S) return;
+  const lobby = S.phase === "lobby", ctl = admin && !hidden;
+  const ph = $("phase");
+  ph.textContent = lobby ? "Enrolment open" : S.phase === "done" ? "Finished" : S.live.length ? "Game in progress" : "In progress";
+  ph.className = "pill " + (lobby ? "open" : S.phase === "running" ? "run" : "");
+  $("org-l").textContent = admin ? (hidden ? "Show controls" : "Hide controls") : "Organiser";
+  $("org-b").classList.toggle("on", admin);
+  document.body.classList.toggle("present", admin && hidden);
+  renderOrg(ctl);
+  $("lobby").hidden = !lobby;
+  if (lobby) renderPool(ctl);
+  $("champ").hidden = S.phase !== "done"; $("champ-n").textContent = S.champion || "";
+  $("bk").hidden = lobby;
+  if (!lobby) renderBracket(ctl);
+  if (admin && S.notice && S.notice.at > seenNotice) { seenNotice = S.notice.at; toast(S.notice.text); }
+  if (G) title();
+}
+
+const seg = (id, opts, cur) => `<span class="seg" id="${id}">${opts.map(([v, l]) => `<button type="button" data-v="${v}" aria-pressed="${v === cur}">${l}</button>`).join("")}</span>`;
+function renderOrg(ctl) {
+  const el = $("org"); el.hidden = !ctl;
+  if (!ctl) return;
+  const n = S.pool.filter((a) => !a.excluded).length;
+  let h = `<b>Organiser</b>`;
+  if (S.phase === "lobby") {
+    h += `<span class="f">Each pairing ${seg("o-bo", [[1, "1 game"], [3, "Best of 3"], [5, "Best of 5"]], bestOf)}</span>
+      <span class="f">Seeding ${seg("o-seed", [["rating", "By rating"], ["random", "Random"]], seeding)}</span>
+      <button class="ib go" id="o-draw" type="button"${n < 2 || n > S.max ? " disabled" : ""}>Draw the bracket · ${n} agent${n === 1 ? "" : "s"}</button>
+      ${n < 2 ? `<span class="hint">Needs at least two agents.</span>` : n > S.max ? `<span class="hint">At most ${S.max} agents; sit some out.</span>` : ""}
+      <span class="sp"></span>
+      <span class="f" title="Pair waiting agents by themselves for rated practice games. Paused while a bracket exists.">Open ladder <button class="sw" id="o-auto" type="button" role="switch" aria-checked="${S.auto}" aria-label="Open ladder"></button></span>`;
+  } else {
+    h += S.phase === "running"
+      ? `<span class="f">Game speed ${seg("o-speed", [[1, "1×"], [2, "2×"], [4, "4×"], [0, "Fast"]], speed)}</span><span class="hint">Press Run on a pairing to play its next game.</span>`
+      : `<span class="hint">The bracket is complete.</span>`;
+    h += `<span class="sp"></span>` + (ending
+      ? `<span class="hint">Clear this bracket and reopen enrolment?</span><button class="ib danger" id="o-reset" type="button">Yes, clear it</button><button class="ib" id="o-keep" type="button">Keep it</button>`
+      : `<button class="ib${S.phase === "done" ? " go" : " danger"}" id="o-end" type="button"${S.live.length ? ` disabled title="A game is still being played"` : ""}>${S.phase === "done" ? "New tournament" : "End tournament"}</button>`);
+  }
+  el.innerHTML = h + `<button class="ib" id="o-lock" type="button">Sign out</button>`;
+}
+$("org").addEventListener("click", (e) => {
+  const b = e.target.closest("button"); if (!b) return;
+  const s = b.closest(".seg");
+  if (s) {
+    const v = b.dataset.v;
+    if (s.id === "o-bo") bestOf = +v; else if (s.id === "o-seed") seeding = v; else { speed = +v; store.set("cr-tournament-speed", String(speed)); }
+    return render();
+  }
+  if (b.id === "o-draw") send({ t: "admin", do: "draw", best_of: bestOf, seeding });
+  else if (b.id === "o-auto") send({ t: "admin", do: "auto", on: !S.auto });
+  else if (b.id === "o-end") { ending = true; render(); }
+  else if (b.id === "o-keep") { ending = false; render(); }
+  else if (b.id === "o-reset") { ending = false; send({ t: "admin", do: "reset" }); }
+  else if (b.id === "o-lock") { admin = false; key = null; store.set("cr-organiser-key", null); ws.close(); render(); }
+});
+
+function renderPool(ctl) {
+  const n = S.pool.filter((a) => !a.excluded).length;
+  $("pool-n").textContent = n; $("pool-l").textContent = n === 1 ? "agent in the pool" : "agents in the pool";
+  $("ws").textContent = (location.protocol === "https:" ? "wss://" : "ws://") + location.host;
+  $("pool").innerHTML = S.pool.length ? S.pool.map((a) => `
+    <div class="panel ag${a.excluded ? " out" : ""}">
+      <span class="av${a.busy ? " busy" : ""}" style="--h:${hue(a.name)}" title="${a.busy ? "In a game right now" : "Connected and waiting"}">${esc(initials(a.name))}</span>
+      <div style="min-width:0"><b title="${esc(a.name)}">${esc(a.name)}</b><small>${a.excluded ? "Sitting this one out" : esc(a.deck.map(cardName).join(" · "))}</small></div>
+      <div class="rt">${Math.round(a.rating)}<span>Rating</span></div>
+      ${ctl ? `<button class="ib" type="button" data-ex="${esc(a.name)}" data-on="${!a.excluded}">${a.excluded ? "Put back in" : "Sit out"}</button>` : ""}
+    </div>`).join("")
+    : `<div class="panel empty" style="grid-column:1/-1"><b>Nobody yet</b>Agents appear here the moment they connect.</div>`;
+}
+$("pool").addEventListener("click", (e) => { const b = e.target.closest("[data-ex]"); if (b) send({ t: "admin", do: "exclude", name: b.dataset.ex, on: b.dataset.on === "true" }); });
+
+function renderBracket(ctl) {
+  const all = S.rounds.flatMap((r) => r.pairings), left = all.filter((p) => p.winner == null).length;
+  const n = new Set(all.flatMap((p) => p.players).filter(Boolean)).size;
+  $("bk-sub").textContent = `${n} agents · ${S.best_of === 1 ? "one game per pairing" : "best of " + S.best_of}` + (S.phase === "running" ? ` · ${left} pairing${left === 1 ? "" : "s"} to play` : "");
+  $("bracket").innerHTML = S.rounds.map((r) => `<div class="round"><h3>${esc(r.name)}</h3><div class="cells">${r.pairings.map((p) => `<div class="cell">${pair(p, ctl)}</div>`).join("")}</div></div>`).join("");
+}
+function pair(p, ctl) {
+  const done = p.winner != null, both = p.players[0] && p.players[1], bye = p.how === "bye";
+  const last = p.games[p.games.length - 1];
+  const row = (i) => {
+    const name = p.players[i];
+    if (!name) return `<div class="pr tbd"><span class="sd"></span><span class="nm"><span>${bye ? "Bye" : "To be decided"}</span></span><span class="sc"></span></div>`;
+    const sc = bye || p.how === "walkover" || !both ? "" : S.best_of === 1 ? (last && done ? last.crowns[i] : "") : p.wins[i];
+    return `<div class="pr${done ? (p.winner === i ? " won" : " lost") : ""}"><span class="sd">${p.seeds[i] || ""}</span>
+      <span class="nm">${!done && both ? `<i class="${p.online[i] ? "" : "off"}" title="${p.online[i] ? "Connected" : "Not connected"}"></i>` : ""}<span title="${esc(name)}">${esc(name)}</span></span><span class="sc">${sc}</span></div>`;
+  };
+  const games = p.games.map((g, i) => `<a href="/replay?id=${g.match}" title="${g.winner == null ? "Drawn " : ""}${g.crowns[0]}–${g.crowns[1]}${g.forfeit ? ", forfeit" : ""}">${p.games.length === 1 && S.best_of === 1 ? "Replay" : "Game " + (i + 1)}</a>`).join(" ");
+  let foot;
+  if (p.live) foot = `<span class="tag live"><i></i>Live</span><span>Game ${p.games.length + 1}</span>` + (G && G.pid === p.id && !G.over ? "" : `<span class="r"><button class="lk" type="button" data-watch="${p.id}">Watch</button></span>`);
+  else if (bye) foot = `<span>Bye into the next round</span>`;
+  else if (done) foot = (p.how === "walkover" ? `<span>Walkover</span>` : "") + games;
+  else if (!both) foot = `<span>Waiting for the round before</span>`;
+  else {
+    const off = p.players.filter((_, i) => !p.online[i]);
+    const status = off.length ? `${esc(off.join(" and "))} not connected` : p.games.length ? `Game ${p.games.length + 1} next` : "Ready";
+    foot = `<span>${status}</span>${games}`;
+    if (ctl) foot += wo === p.id
+      ? `<span class="r"><button class="ib sm" type="button" data-wo="${p.id}" data-side="0">${esc(p.players[0])} goes through</button><button class="ib sm" type="button" data-wo="${p.id}" data-side="1">${esc(p.players[1])} goes through</button><button class="ib sm" type="button" data-wo-x>Cancel</button></span>`
+      : `<span class="r"><button class="ib sm" type="button" data-wo-ask="${p.id}" title="Send one player through without a game">Walkover</button><button class="ib sm go" type="button" data-run="${p.id}"${off.length ? " disabled" : ""}>Run ${p.games.length ? "game " + (p.games.length + 1) : "game"}</button></span>`;
+  }
+  return `<div class="panel pair${p.live ? " live" : bye ? " bye" : !done && both ? " ready" : ""}">${row(0)}${row(1)}<div class="pf">${foot}</div></div>`;
+}
+$("bracket").addEventListener("click", (e) => {
+  const b = e.target.closest("button"); if (!b) return;
+  const d = b.dataset;
+  if (d.run) send({ t: "admin", do: "run", pid: d.run, speed });
+  else if (d.woAsk) { wo = d.woAsk; render(); }
+  else if ("woX" in d) { wo = null; render(); }
+  else if (d.wo) { wo = null; send({ t: "admin", do: "walkover", pid: d.wo, side: +d.side }); }
+  else if (d.watch) { send({ t: "focus", pid: d.watch }); scrollTo({ top: 0, behavior: "smooth" }); }
+});
+
+// ---------- organiser sign-in ----------
+$("org-b").addEventListener("click", () => {
+  if (admin) { hidden = !hidden; return render(); }
+  const pop = $("pop"); pop.hidden = !pop.hidden; $("org-b").setAttribute("aria-expanded", String(!pop.hidden));
+  if (!pop.hidden) $("key").focus();
+});
+$("key-f").addEventListener("submit", (e) => { e.preventDefault(); key = $("key").value.trim(); if (!key) return; $("key-e").hidden = true; tried = true; send({ t: "auth", key }); });
+addEventListener("keydown", (e) => { if (e.key === "Escape") $("pop").hidden = true; });
+$("full").addEventListener("click", () => { const d = document; (d.fullscreenElement ? d.exitFullscreen() : d.documentElement.requestFullscreen()).catch(() => {}); });
+
+// ---------- the live game ----------
+// Frames are drawn a moment behind their arrival and tweened by arrival time, so a game
+// looks smooth whether it is being played at 1× or flat out.
+const cv = $("cv"), board = createArena(cv);
+let G = null, closeT = 0;
+
+function title() {
+  const r = S && S.rounds.find((x) => x.pairings.some((p) => p.id === G.pid));
+  $("g-title").textContent = (r ? r.name : "Game") + (S && S.best_of > 1 ? ` · Game ${G.game}` : "");
+}
+function startGame(m) {
+  clearTimeout(closeT);
+  G = { pid: m.pid, meta: m.meta, p: [m.p0, m.p1], game: m.game, frames: [], deaths: [], events: [], life: new Map(), gap: 100, over: false, towers: m.towers };
+  $("stage").hidden = false; $("over").hidden = true; $("g-live").hidden = false; $("g-done").hidden = true;
+  for (const s of [0, 1]) {
+    $("n" + s).textContent = m["p" + s]; $("n" + s).title = m["p" + s];
+    $("s" + s).textContent = s ? "Top of the board" : "Bottom of the board";
+    $("e" + s).innerHTML = "<span><i></i></span>".repeat(10); $("k" + s).innerHTML = CROWN.repeat(3);
+    $("d" + s).innerHTML = m["deck" + s].map((c) => `<span class="chip">${esc(cardName(c))}</span>`).join("");
+  }
+  $("g-speed").textContent = m.speed ? m.speed + "× speed" : "Fast";
+  $("g-speed").hidden = m.speed === 1;
+  $("feed").innerHTML = `<li class="none">Nothing played yet.</li>`;
+  board.configure(m.meta, m.towers.map((e) => ({ o: e[1], x: e[3], y: e[4], king: m.meta.cards[e[2]] === "king_tower", hw: e[7], hh: e[8] })));
+  title(); resize(); render();
+}
+function addFrame(m) {
+  const f = m.f, now = performance.now(), prev = G.frames[G.frames.length - 1];
+  const dead = (e, t) => ({ t, o: e[1], x: e[3], y: e[4], r: e[7] || .5, tower: !!(e[6] & 2), king: G.meta.cards[e[2]] === "king_tower", hw: e[7], hh: e[8] });
+  const ids = new Set(f[3].map((e) => e[0]));
+  if (prev) { G.gap += (Math.min(1000, now - prev.at) - G.gap) * .15; for (const e of prev.f[3]) if (!ids.has(e[0])) G.deaths.push(dead(e, f[0])); }
+  else for (const e of G.towers) if (!ids.has(e[0])) G.deaths.push(dead(e, -1e6));    // fell before this page tuned in
+  for (const e of f[3]) { let l = G.life.get(e[0]); if (!l) G.life.set(e[0], l = [prev ? f[0] : -1e6, null]); if (l[1] == null && !(e[6] & 4)) l[1] = f[0]; }
+  G.frames.push({ at: now, f });
+  if (G.frames.length > 80) G.frames.splice(0, 40);
+  if (G.deaths.length > 300) G.deaths = G.deaths.filter((d) => d.tower || d.t > f[0] - 100);
+  if (m.ev.length) {
+    G.events.push(...m.ev); if (G.events.length > 400) G.events.splice(0, 200);
+    const feed = $("feed"); if (feed.firstChild && feed.firstChild.className === "none") feed.innerHTML = "";
+    for (const e of m.ev) feed.insertAdjacentHTML("afterbegin", `<li><span class="t">${clock(e[0], G.meta.tps)}</span><i style="background:${P[e[1]]}"></i><span class="c">${esc(cardName(e[2]))}</span></li>`);
+    while (feed.children.length > 7) feed.lastChild.remove();
+  }
+}
+function endGame(m) {
+  if (!G || G.pid !== m.pid) return;
+  G.over = true;
+  const isVoid = "void" in m, link = $("over-r");
+  $("over-k").textContent = isVoid ? "" : m.champion ? "Champion" : m.decided ? "Through to the next round" : "";
+  $("over-t").textContent = isVoid ? "Game void" : m.winner ? m.winner + (m.decided ? " wins" : " takes the game") : "Draw";
+  const c = m.crowns || [0, 0], w = m.winner === G.p[1] ? 1 : 0;
+  $("over-s").textContent = isVoid ? cap(m.void) + ". Nothing was recorded."
+    : (m.winner ? `${c[w]}–${c[1 - w]}` : `${c[0]}–${c[1]}`) + (m.forfeit ? " · the opponent lost its connection" : m.winner && c[0] === c[1] ? " · decided on tower health" : "")
+      + (!m.winner ? " · the pairing needs another game" : "")
+      + (S && S.best_of > 1 && m.wins ? ` · series ${Math.max(...m.wins)}–${Math.min(...m.wins)}` : "");
+  link.hidden = isVoid; if (!isVoid) link.href = "/replay?id=" + m.match;
+  $("over").hidden = false; $("g-live").hidden = true; $("g-done").hidden = false;
+  clearTimeout(closeT);
+  closeT = setTimeout(() => { G = null; $("stage").hidden = true; send({ t: "focus", pid: null }); render(); }, m.champion ? 20000 : 9000);
+  render();
+}
+function resize() {
+  if (!G) return;
+  const narrow = innerWidth <= 900, room = $("stage").clientWidth;
+  board.resize(narrow ? room - 2 : Math.min(620, room * 0.5), Math.max(340, innerHeight - (narrow ? 110 : 150)));
+}
+addEventListener("resize", resize);
+
+function scene(now) {
+  const fr = G.frames; if (!fr.length) return null;
+  const target = now - Math.max(120, Math.min(700, G.gap * 1.7));
+  let i = fr.length - 1; while (i > 0 && fr[i].at > target) i--;
+  const A = fr[i], B = fr[Math.min(i + 1, fr.length - 1)], a = A.f, b = B.f;
+  const k = B.at > A.at ? Math.max(0, Math.min(1, (target - A.at) / (B.at - A.at))) : 0;
+  const next = new Map(b[3].map((e) => [e[0], e]));
+  const ents = a[3].map((e) => {
+    const n = next.get(e[0]), l = G.life.get(e[0]);
+    const u = { id: e[0], o: e[1], name: G.meta.cards[e[2]] || "unit", x: e[3], y: e[4], hp: e[5], f: e[6], hw: e[7], hh: e[8], a: 1, hit: false, dx: 0, dy: 0, t0: l ? l[0] : 0, t1: l && l[1] != null ? l[1] : (l ? l[0] : 0) };
+    if (n) { u.dx = n[3] - e[3]; u.dy = n[4] - e[4]; u.x += u.dx * k; u.y += u.dy * k; u.hp += (n[5] - e[5]) * k; u.hit = n[5] < e[5] - 0.0005; }
+    else if (a !== b) u.a = 1 - k;
+    return u;
+  });
+  const end = k === 1 ? b : a;
+  return { t: a[0] + (b[0] - a[0]) * k, crowns: end[1], elixir: a[2] && b[2] ? [a[2][0] + (b[2][0] - a[2][0]) * k, a[2][1] + (b[2][1] - a[2][1]) * k] : null, ents, events: G.events, deaths: G.deaths, labels: true };
+}
+function loop(now) {
+  if (G) {
+    const s = scene(now);
+    if (s) {
+      board.draw(s);
+      const tps = G.meta.tps;
+      for (const p of [0, 1]) {
+        $("c" + p).textContent = s.crowns[p];
+        $("pl" + p).classList.toggle("lead", s.crowns[p] > s.crowns[1 - p]);
+        const pips = $("k" + p).children; for (let i = 0; i < 3; i++) pips[i].classList.toggle("on", 2 - i < s.crowns[p]);
+        $("x" + p).hidden = !s.elixir;        // only the organiser's screen is sent elixir during a game
+        if (!s.elixir) continue;
+        const el = s.elixir[p]; $("ev" + p).textContent = Math.floor(el);
+        const cells = $("e" + p).children; for (let i = 0; i < 10; i++) cells[i].firstChild.style.setProperty("--f", Math.round(Math.max(0, Math.min(1, el - i)) * 100) + "%");
+      }
+      $("g-clock").textContent = clock(s.t, tps);
+      const ph = $("g-phase"), ot = s.t >= G.meta.regulation, x2 = !ot && s.t >= G.meta.regulation - 60 * tps;
+      ph.hidden = !(ot || x2); ph.className = "tag " + (ot ? "ot" : "x2"); ph.textContent = ot ? "Overtime" : "2× elixir";
+    }
+  }
+  requestAnimationFrame(loop);
+}
+requestAnimationFrame(loop);
+connect();
+</script>
+</body>
+</html>

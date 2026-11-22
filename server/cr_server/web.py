@@ -7,7 +7,9 @@ becomes an agent connection; any other GET is answered here.
 Routes
     /                     the standings page
     /replay?id=N          the replay viewer
+    /tournament           the tournament: pool, bracket and the live game
     /api/standings        standings, recent results and live counts (JSON)
+    /api/tournament       pool and bracket (JSON); the page itself uses a socket
     /api/replay/N         frame-by-frame trace of match N (JSON, re-simulated)
     /healthz              liveness probe
 """
@@ -28,7 +30,7 @@ from websockets.http11 import Response
 from . import match
 
 WEB_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "web")
-PAGES = {"/": "index.html", "/replay": "replay.html", "/play": "play.html"}
+PAGES = {"/": "index.html", "/replay": "replay.html", "/play": "play.html", "/tournament": "tournament.html"}
 REPLAY_RE = re.compile(r"^/api/replay/(\d{1,12})$")
 TRACE_CACHE = 24            # most-recently-watched traces kept (gzipped) in memory
 CSP = ("default-src 'self'; script-src 'self' 'unsafe-inline'; "
@@ -80,6 +82,8 @@ class Web:
                     return _response(200, f.read(), "text/html; charset=utf-8", gz=gz, cache="no-cache")
             if path == "/api/standings":
                 return _json(200, self.arena.standings_snapshot(), gz=gz)
+            if path == "/api/tournament":
+                return _json(200, self.arena.tournament_snapshot(), gz=gz)
             if path == "/api/matchmaking":
                 return _json(200, self.arena.matchmaking_snapshot(), gz=gz)
             if path == "/arena.js":

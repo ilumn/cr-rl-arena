@@ -37,8 +37,28 @@ def _validate(action):
         return None
 
 
+def spectator_frame(b, idx, t):
+    """One frame of the real, unmirrored board, as the viewers draw it:
+    [tick, crowns, elixir, [[id, owner, card index, x, y, hp fraction, flags, hw, hh], ...]]."""
+    ents = []
+    for (owner, card, x, y, hp, mhp, flying, is_tower, deploying, eid, hw, hh) in b.spectator_entities():
+        flags = (1 if flying else 0) | (2 if is_tower else 0) | (4 if deploying else 0)
+        ents.append([eid, owner, idx.get(card, 0), round(x, 2), round(y, 2),
+                     round(hp / mhp, 3) if mhp else 0.0, flags, round(hw, 2), round(hh, 2)])
+    return [t, list(b.crowns()), [round(b.elixir(0), 1), round(b.elixir(1), 1)], ents]
+
+
+def board_meta(sim, cards):
+    """The board's dimensions and card list, sent ahead of any frames."""
+    return {
+        "w": sim.WIDTH, "h": sim.HEIGHT, "river_y": sim.RIVER_Y, "river_half": sim.RIVER_HALF,
+        "bridges": list(sim.BRIDGES), "bridge_half": sim.BRIDGE_HALF,
+        "tps": sim.TICKS_PER_SECOND, "regulation": sim.REGULATION_TICKS, "cards": cards,
+    }
+
+
 async def run_match(sim, agent0, agent1, *, seed, move_timeout=2.0, max_ticks=None,
-                    realtime=False):
+                    realtime=False, pace=0.0, stop_if_gone=False, watch=None):
     """Play one match, asking both agents for a move on every tick.
 
     Each observation's `last_action` tells the agent what became of its previous
@@ -46,9 +66,20 @@ async def run_match(sim, agent0, agent1, *, seed, move_timeout=2.0, max_ticks=No
     had to drop the reply, it says why instead: "missed" (no answer in time) or
     "malformed".
 
+    `pace` is the least real time one tick may take, in seconds: a game that is
+    being watched live is held to it so it does not flash past. `stop_if_gone`
+    ends the game as soon as an agent's connection is lost instead of playing it
+    out against nobody. `realtime` is both at once, at the simulator's own speed.
+
+    `watch(battle, tick, deploys, outcome)` is called after every tick with the
+    deploys that happened on it, as `[tick, seat, card, x, y]` in board
+    coordinates. It must not block.
+
     Returns the match record, including `aborted: [seats]` if agents stopped
     answering. The caller voids ranked games or saves an exhibition forfeit.
     """
+    if realtime:
+        pace, stop_if_gone = 1 / sim.TICKS_PER_SECOND, True
     b = sim.Battle()
     b.reset(seed, agent0.deck, agent1.deck)
     if max_ticks is None:
@@ -73,7 +104,7 @@ async def run_match(sim, agent0, agent1, *, seed, move_timeout=2.0, max_ticks=No
             agent0.act(obs[0], move_timeout),
             agent1.act(obs[1], move_timeout),
         )
-        if realtime and (not agent0.alive or not agent1.alive):
+        if stop_if_gone and (not agent0.alive or not agent1.alive):
             break                       # retain the partial game for the forfeit replay
         acts = [None, None]
         for i, (action, why) in enumerate(replies):
@@ -91,7 +122,22 @@ async def run_match(sim, agent0, agent1, *, seed, move_timeout=2.0, max_ticks=No
         for i in (0, 1):
             if acts[i] is not None:
                 actions.append([t, i, list(acts[i])])
+        if watch:
+            # what each seat is trying to play, read before the hand cycles
+            before = (b.elixir(0), b.elixir(1))
+            trying = [None, None]
+            for i in (0, 1):
+                if acts[i] is not None:
+                    slot = acts[i][0]
+                    trying[i] = "ability" if slot == sim.ABILITY_SLOT else b.hand(i)[slot] if 0 <= slot < 4 else None
         out = b.step(acts[0], acts[1])
+        if watch:
+            deploys = []
+            for i in (0, 1):
+                if trying[i] and b.elixir(i) < before[i]:     # elixir only falls when something was played
+                    y = acts[i][2] if i == 0 else sim.HEIGHT - acts[i][2]
+                    deploys.append([t, i, trying[i], round(acts[i][1], 1), round(y, 1)])
+            watch(b, t + 1, deploys, out)
         for i in (0, 1):
             if acts[i] is not None:
                 moves[i] += 1
@@ -100,10 +146,10 @@ async def run_match(sim, agent0, agent1, *, seed, move_timeout=2.0, max_ticks=No
                 moves[i] += 1
                 ignored[i] += 1
         t += 1
-        if realtime:
-            # Spend at least one real tick per simulation tick, including network
-            # time. A slow reply never causes a burst of accelerated catch-up.
-            await asyncio.sleep(max(0, 1 / sim.TICKS_PER_SECOND - (loop.time() - started)))
+        if pace:
+            # Spend at least `pace` per simulation tick, including network time.
+            # A slow reply never causes a burst of accelerated catch-up.
+            await asyncio.sleep(max(0, pace - (loop.time() - started)))
 
     return {
         **({"aborted": aborted} if aborted is not None else {}),
@@ -174,13 +220,7 @@ def trace(sim, rec, every=2):
         by_tick.setdefault(t, [None, None])[p] = tuple(a)
 
     def frame(t):
-        # the viewer is a spectator: it shows the real, unmirrored board
-        ents = []
-        for (owner, card, x, y, hp, mhp, flying, is_tower, deploying, eid, hw, hh) in b.spectator_entities():
-            flags = (1 if flying else 0) | (2 if is_tower else 0) | (4 if deploying else 0)
-            ents.append([eid, owner, idx.get(card, 0), round(x, 2), round(y, 2),
-                         round(hp / mhp, 3) if mhp else 0.0, flags, round(hw, 2), round(hh, 2)])
-        return [t, list(b.crowns()), [round(b.elixir(0), 1), round(b.elixir(1), 1)], ents]
+        return spectator_frame(b, idx, t)     # the viewer is a spectator: the real, unmirrored board
 
     frames, events = [frame(0)], []
     # stop where the recorded match stopped (a match can be cut short by the server)
@@ -219,10 +259,7 @@ def trace(sim, rec, every=2):
                 and t == rec.get("ticks", t))
     return {
         "meta": {
-            "w": sim.WIDTH, "h": sim.HEIGHT, "river_y": sim.RIVER_Y, "river_half": sim.RIVER_HALF,
-            "bridges": list(sim.BRIDGES), "bridge_half": sim.BRIDGE_HALF,
-            "tps": sim.TICKS_PER_SECOND, "every": every,
-            "regulation": sim.REGULATION_TICKS, "cards": cards,
+            **board_meta(sim, cards), "every": every,
             "outcome": out, "crowns": crowns, "ticks": t, "faithful": faithful,
         },
         "events": events,      # [tick, seat, card, x, y] for each deploy that happened (board coords)

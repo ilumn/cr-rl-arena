@@ -10,6 +10,8 @@
 #   PORT               port to listen on (Railway sets this; default 8765)
 #   CR_ARENA_DATA      ratings + replays directory (default /data -- mount a volume here)
 #   CR_MOVE_TIMEOUT    seconds an agent has to answer each tick (default 2.0)
+#   CR_ADMIN_KEY       the organiser's key for /tournament (default: random, printed at startup)
+#   CR_AUTO_MATCH      "1" starts with the open ladder on (default off: nothing plays by itself)
 
 # ---- stage 1: compile the Rust simulator into a Python wheel ----
 FROM python:3.12-slim AS build

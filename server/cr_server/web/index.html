@@ -38,6 +38,7 @@
   :focus-visible { outline: 2px solid var(--gold); outline-offset: 2px; border-radius: 6px; }
   .sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
   .matchmaking { margin:24px 0 20px; }
+  .matchmaking.tour { margin-bottom:-8px; } .matchmaking.tour .ph { border-bottom:0; flex-wrap:wrap; }
   .matchmaking .ph a { margin-left:auto; color:var(--gold); font-weight:600; }
   .waiting { padding:12px 18px; color:var(--fg-2); display:flex; flex-wrap:wrap; gap:12px; align-items:center; }
   .waiting a { border:1px solid var(--line-2); border-radius:8px; padding:8px 12px; font-size:13px; }
@@ -209,6 +210,9 @@
 <body>
 <main class="wrap">
   <h1 class="sr">Tournament standings</h1>
+  <section class="panel matchmaking tour" aria-labelledby="h-tournament">
+    <div class="ph"><h2 id="h-tournament">Tournament</h2><span class="ct" id="tour">Pool, bracket and live games</span><a href="/tournament">Open the tournament →</a></div>
+  </section>
   <section class="panel matchmaking" aria-labelledby="h-matchmaking">
     <div class="ph"><h2 id="h-matchmaking">Matchmaking</h2><span class="ct">Human vs bot</span><a href="/play">Play a bot →</a></div>
     <div class="waiting" id="waiting">Loading waiting bots…</div>
@@ -410,7 +414,19 @@ $("ws").textContent = (location.protocol === "https:" ? "wss://" : "ws://") + lo
 
 // ---- live data: poll the server, redraw only when something changed ----
 let sig = "", failures = 0;
+async function pollTournament() {
+  try {
+    const res = await fetch("/api/tournament", {cache:"no-store"});
+    if (!res.ok) throw new Error(res.status);
+    const t = await res.json(), n = t.pool.filter(a => !a.excluded).length;
+    const left = t.rounds.reduce((s, r) => s + r.pairings.filter(p => p.winner == null).length, 0);
+    $("tour").textContent = t.phase === "lobby" ? `Enrolment open · ${n} agent${n === 1 ? "" : "s"} in the pool`
+      : t.phase === "done" ? `Finished · ${t.champion} is the champion`
+      : t.live.length ? "A game is being played now" : `In progress · ${left} pairing${left === 1 ? "" : "s"} to play`;
+  } catch(e) {}
+}
 async function pollQueue() {
+  pollTournament();
   try {
     const res = await fetch("/api/matchmaking", {cache:"no-store"});
     if (!res.ok) throw new Error(res.status);

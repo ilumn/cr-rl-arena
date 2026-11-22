@@ -139,6 +139,7 @@ def test_server_serves_page_data_and_replays(tmp_path, monkeypatch):
     from cr_server import server, web
 
     monkeypatch.setattr(server, "DATA_DIR", str(tmp_path))
+    monkeypatch.setattr(server, "AUTO_MATCH", True)         # the open ladder: waiting agents are paired
     orig = match.run_match
 
     async def short(sim, a0, a1, **kw):                    # keep matches brief
@@ -283,6 +284,7 @@ def _serve(tmp_path, monkeypatch, timeout, body):
     from cr_server import server, web
 
     monkeypatch.setattr(server, "DATA_DIR", str(tmp_path))
+    monkeypatch.setattr(server, "AUTO_MATCH", True)         # the open ladder: waiting agents are paired
     monkeypatch.setattr(server, "MOVE_TIMEOUT", timeout)
 
     async def main():

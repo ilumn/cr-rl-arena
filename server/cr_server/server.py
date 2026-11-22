@@ -15,6 +15,12 @@ Env:
     CR_ARENA_BIND        host:port         (default 0.0.0.0:8765)
     CR_ARENA_DATA        data dir          (default ./arena_data)
     CR_MOVE_TIMEOUT      seconds an agent has to answer each tick (default 2.0)
+    CR_ADMIN_KEY         the organiser's key for the tournament page. If unset, a
+                         random one is made at startup and printed to the log.
+    CR_AUTO_MATCH        "1" pairs waiting agents by itself from the first start
+                         (the open ladder). Default off: agents wait in the pool
+                         until the organiser starts something. The organiser can
+                         switch it from the tournament page; that choice is saved.
 
 Protocol (JSON text frames)
   C->S  {"t":"join","name":str,"deck":[8 card names]}   (deck required; an
@@ -28,6 +34,23 @@ Protocol (JSON text frames)
          "rating","delta","match","seed"}
         {"t":"aborted","reason"}                  (match void: the opponent stopped answering)
         {"t":"leaderboard","standings":[...]}
+
+Joining puts an agent in the pool. What it is given to play is up to the
+organiser: a pairing in the tournament bracket, the open ladder when that is
+switched on, or a person who picks it from the play page. To the agent these are
+all the same: a `start`, a run of `obs`, a `result`.
+
+The tournament page talks to the server over the same socket (see `/tournament`):
+  C->S  {"t":"watch"}                             first message: become a spectator
+        {"t":"focus","pid":str|null}              which live game to be sent (null: the newest)
+        {"t":"auth","key":str}                    become the organiser
+        {"t":"admin","do":"draw"|"run"|"walkover"|"reset"|"auto"|"exclude", ...}
+  S->C  {"t":"state", ...}                        pool and bracket, on every change
+        {"t":"live","pid","meta","p0","p1",...}   a game this spectator is now watching
+        {"t":"frame","pid","f":[tick,crowns,elixir,entities],"ev":[deploys]}
+                                                  (elixir is null unless this is the organiser)
+        {"t":"over","pid", ...}                   that game's result
+        {"t":"auth","ok"} / {"t":"admin","ok","msg"}
 
 Every agent plays as the bottom player: `obs` and `action` are in the agent's own
 seat frame (see cr_sim), so an agent is never told, and never needs, its seat. The
@@ -44,9 +67,11 @@ closed without being recorded.
 from __future__ import annotations
 
 import asyncio
+import hmac
 import json
 import os
 import random
+import secrets
 import time
 import uuid
 from contextlib import suppress
@@ -57,11 +82,16 @@ import websockets
 from . import match
 from .matchlog import UPSET_GAP, MatchLog
 from .leaderboard import Leaderboard
+from .tournament import MAX_ENTRANTS, Tournament
 from .web import Web
 
 BIND = os.environ.get("CR_ARENA_BIND", "0.0.0.0:8765")
 DATA_DIR = os.environ.get("CR_ARENA_DATA", "./arena_data")
 MOVE_TIMEOUT = float(os.environ.get("CR_MOVE_TIMEOUT", "2.0"))
+ADMIN_KEY = os.environ.get("CR_ADMIN_KEY", "")
+AUTO_MATCH = os.environ.get("CR_AUTO_MATCH", "0").strip().lower() in ("1", "true", "yes", "on")
+SPEEDS = (1, 2, 4, 0)       # how fast a watched game runs; 0 is as fast as the agents answer
+MAX_SPECTATORS = 400
 HUMAN_DECK = ["knight", "archers", "giant", "musketeer", "valkyrie", "minions", "fireball", "arrows"]
 
 
@@ -173,6 +203,90 @@ class HumanAgent(WsAgent):
         return None, None
 
 
+class Spectator:
+    """A browser on the tournament page: sent the bracket, and one live game."""
+
+    def __init__(self, ws):
+        self.ws = ws
+        self.admin = False          # has given the organiser's key
+        self.fails = 0
+        self.focus = None           # the pairing it asked to watch; None follows the newest game
+        self.watching = None        # the pairing whose frames it is being sent
+        self.open = True
+        self.q: asyncio.Queue = asyncio.Queue()
+
+    def push(self, obj, droppable=False):
+        """Queue a message without ever waiting on this browser. A slow one loses
+        frames; one that cannot even keep up with the rest is closed."""
+        if not self.open:
+            return
+        backlog = self.q.qsize()
+        if droppable and backlog > 40:
+            return
+        if backlog > 400:
+            self.open = False
+            asyncio.ensure_future(self.ws.close())
+            return
+        self.q.put_nowait(obj if isinstance(obj, str) else json.dumps(obj, separators=(",", ":")))
+
+    async def pump(self):
+        try:
+            while True:
+                await self.ws.send(await self.q.get())
+        except websockets.ConnectionClosed:
+            pass
+        finally:
+            self.open = False
+
+
+class LiveGame:
+    """A tournament game in progress, as the spectators see it."""
+
+    def __init__(self, arena, pairing, speed):
+        self.arena, self.pid, self.speed = arena, pairing["id"], speed
+        self.number = len(pairing["games"]) + 1
+        self.header = None          # sent to a spectator before any frame
+        self.last = None            # the newest frame (public, organiser's), for a spectator who arrives mid-game
+        self.pending = []           # deploys since the last frame went out
+        self.sent_at = 0.0
+        self.seats = None
+
+    def begin(self, a, b):
+        """Seats are drawn: `a` is the bottom player on the board."""
+        self.seats = (a, b)
+        cards = self.arena._deck_checker.deployable_cards() + ["princess_tower", "king_tower"]
+        self.idx = {n: i for i, n in enumerate(cards)}
+        self.cards = cards
+
+    def on_tick(self, b, t, deploys, out):
+        self.pending += deploys
+        first = self.header is None
+        if not (first or out or t % 2 == 0):
+            return
+        now = time.monotonic()
+        if not (first or out) and now - self.sent_at < 0.03:
+            return                  # a game run flat out is thinned to what a screen can show
+        frame = match.spectator_frame(b, self.idx, t)
+        if first:
+            a, c = self.seats
+            self.header = json.dumps({
+                "t": "live", "pid": self.pid, "meta": match.board_meta(cr_sim, self.cards),
+                "p0": a.name, "p1": c.name, "deck0": a.deck, "deck1": c.deck,
+                "speed": self.speed, "game": self.number,
+                "towers": [e for e in frame[3] if e[6] & 2],
+            }, separators=(",", ":"))
+            self.arena._announce(self)
+        # Elixir is the one thing on the board an agent is never told about its
+        # opponent, so only the organiser's screen is sent it while a game is live.
+        self.last = tuple(
+            json.dumps({"t": "frame", "pid": self.pid, "f": f, "ev": self.pending}, separators=(",", ":"))
+            for f in (frame[:2] + [None] + frame[3:], frame))
+        self.pending, self.sent_at = [], now
+        for sp in self.arena.spectators:
+            if sp.watching == self.pid:
+                sp.push(self.last[sp.admin], droppable=not out)
+
+
 class Arena:
     def __init__(self):
         self.board = Leaderboard(os.path.join(DATA_DIR, "leaderboard.json"))
@@ -184,6 +298,15 @@ class Arena:
         self.online: dict[str, int] = {}        # name -> open connections under it
         self.live = 0                           # matches in progress
         self._deck_checker = cr_sim.Battle()  # only used to validate decks at join
+        self.agents: dict[str, list[WsAgent]] = {}   # name -> its open connections: the pool
+        self.tour = Tournament(os.path.join(DATA_DIR, "tournament.json"), auto=AUTO_MATCH)
+        self.admin_key = ADMIN_KEY or secrets.token_urlsafe(12)
+        self.spectators: set[Spectator] = set()
+        self.games: dict[str, LiveGame] = {}    # pairing id -> its game in progress
+        self.featured = None                    # the newest of those
+        self.notice = None                      # the last thing the organiser should hear about
+        self._dirty = False
+        self._tasks: set[asyncio.Task] = set()
 
     async def handler(self, ws):
         try:
@@ -196,6 +319,9 @@ class Arena:
             return
         if msg.get("t") == "play":
             await self._human_game(ws, msg)
+            return
+        if msg.get("t") == "watch":
+            await self._spectate(ws)
             return
         if msg.get("t") == "leaderboard":
             await ws.send(json.dumps({"t": "leaderboard", "standings": self.board.standings()}))
@@ -218,11 +344,17 @@ class Arena:
                           "rating": round(self.board.get(name).rating, 1)})
         self._enqueue(agent)
         self.online[name] = self.online.get(name, 0) + 1
+        self.agents.setdefault(name, []).append(agent)
+        self._changed()
         try:
             await ws.wait_closed()
         finally:
             agent.alive = False
             self.idle.pop(agent.queue_id, None)
+            self.agents[name].remove(agent)
+            if not self.agents[name]:
+                del self.agents[name]
+            self._changed()
             left = self.online.get(name, 1) - 1
             if left > 0:
                 self.online[name] = left
@@ -237,7 +369,7 @@ class Arena:
         return {
             "waiting": [{"id": ag.queue_id, "name": ag.name,
                          "rating": round(self.board.get(ag.name).rating, 1), "deck": ag.deck}
-                        for ag in self.idle.values() if ag.alive],
+                        for ag in self.idle.values() if ag.alive and not self.tour.in_play(ag.name)],
             "live": self.live,
             "cards": self._deck_checker.deployable_cards(),
             "default_deck": HUMAN_DECK,
@@ -250,7 +382,11 @@ class Arena:
             await ws.send(json.dumps({"t": "error", "msg": problem}))
             return
         bot_id = msg.get("bot")
-        bot = self.idle.pop(bot_id, None) if isinstance(bot_id, str) else None
+        bot = self.idle.get(bot_id) if isinstance(bot_id, str) else None
+        if bot is not None and self.tour.in_play(bot.name):
+            await ws.send(json.dumps({"t": "error", "msg": "That bot is in the tournament bracket. Please choose another."}))
+            return
+        bot = self.idle.pop(bot_id, None) if bot is not None else None
         if bot is None or not bot.alive:
             await ws.send(json.dumps({"t": "error", "msg": "That bot is no longer waiting. Please choose another."}))
             return
@@ -288,6 +424,8 @@ class Arena:
         while True:
             await self._queue_changed.wait()
             self._queue_changed.clear()
+            if not (self.tour.auto and self.tour.phase == "lobby"):
+                continue                # nothing starts by itself unless the open ladder is on
             waiting = [ag for ag in self.idle.values() if ag.alive]
             for i in range(0, len(waiting) - 1, 2):
                 a, b = waiting[i:i + 2]
@@ -295,7 +433,10 @@ class Arena:
                 self.idle.pop(b.queue_id, None)
                 asyncio.create_task(self._play(a, b))
 
-    async def _play(self, a: WsAgent, b: WsAgent):
+    async def _play(self, a: WsAgent, b: WsAgent, *, live: LiveGame | None = None, pace: float = 0.0):
+        """Play one game and record it. Returns what came of it: `{"match": id,
+        "winner": name or None, ...}` for a game that counted, `{"void": why}`
+        for one that did not."""
         rated = not (a.human or b.human)
         # Seats are drawn at random for every match: `a` is player 0 (bottom) from
         # here on. Queue order used to decide it, so with two agents connected the
@@ -303,6 +444,7 @@ class Arena:
         if random.random() < 0.5:
             a, b = b, a
         self.live += 1
+        self._changed()
         try:
             seed = random.getrandbits(63)
             for ag, opponent in ((a, b), (b, a)):
@@ -319,6 +461,9 @@ class Arena:
                 await ag.send(start)
 
             options = {"realtime": True} if not rated else {}
+            if live is not None:
+                live.begin(a, b)
+                options = {"pace": pace, "stop_if_gone": True, "watch": live.on_tick}
             res = await match.run_match(cr_sim, a, b, seed=seed, move_timeout=MOVE_TIMEOUT, **options)
             if res.get("aborted") is not None:
                 # One or both agents stopped answering. The match is void: no rating
@@ -333,7 +478,7 @@ class Arena:
                 if rated:
                     print(f"[match void] {a.name} vs {b.name}: "
                           f"{', '.join(g.name for g in gone)} stopped responding at tick {res['ticks']}")
-                    return
+                    return {"void": f"{' and '.join(g.name for g in gone)} stopped responding"}
             out = res["outcome"]
             # forfeit: a disconnected agent loses to a connected one
             forfeit = False
@@ -343,6 +488,8 @@ class Arena:
                 out, forfeit = 1, True
             elif not rated and not a.alive and not b.alive:
                 out, forfeit = 3, True
+            if live is not None and out == 0:
+                return {"void": "both agents lost their connection"}
 
             score_a = 1.0 if out == 1 else 0.0 if out == 2 else 0.5
             before = tuple(None if ag.human else self.board.get(ag.name).rating for ag in (a, b))
@@ -359,15 +506,201 @@ class Arena:
                                **({"rated": False} if not rated else {})})
             print(f"[match] {a.name} vs {b.name} -> {['--','P0','P1','draw'][out]} "
                   f"{res['crowns']} in {res['ticks']} ticks")
+            return {"match": mid, "winner": a.name if out == 1 else b.name if out == 2 else None,
+                    "p0": a.name, "p1": b.name, "crowns": c, "forfeit": forfeit}
         except Exception as e:  # never let one match kill the server
             print(f"[match error] {a.name} vs {b.name}: {e!r}")
             if not rated:
                 for ag in (a, b):
                     await ag.send({"t": "error", "msg": "The game could not finish. Please try again."})
+            return {"void": "the server could not finish the game"}
         finally:
             self.live -= 1
             for x in (a, b):
                 self._enqueue(x)
+            self._changed()
+
+    # ---- the tournament: pool, bracket, spectators ---------------------------
+    def tournament_snapshot(self) -> dict:
+        """Everything the tournament page shows."""
+        here = {n for n, ags in self.agents.items() if any(ag.alive for ag in ags)}
+        free = {ag.name for ag in self.idle.values() if ag.alive}
+        excluded = set(self.tour.d["excluded"])
+        snap = self.tour.snapshot()
+        for r in snap["rounds"]:
+            r["pairings"] = [{**p, "online": [n in here for n in p["players"]]} for p in r["pairings"]]
+        pool = [{"name": n, "rating": round(self.board.get(n).rating, 1), "deck": self.agents[n][-1].deck,
+                 "busy": n not in free, "excluded": n in excluded} for n in here]
+        pool.sort(key=lambda e: (-e["rating"], e["name"]))
+        return {**snap, "pool": pool, "live": list(self.games), "featured": self.featured,
+                "notice": self.notice, "max": MAX_ENTRANTS, "now": int(time.time() * 1000)}
+
+    def _changed(self):
+        """Tell the spectators, once, after whatever is changing has finished changing."""
+        if not self._dirty:
+            self._dirty = True
+            asyncio.get_running_loop().call_soon(self._flush)
+
+    def _flush(self):
+        self._dirty = False
+        if self.spectators:
+            text = json.dumps({"t": "state", **self.tournament_snapshot()}, separators=(",", ":"))
+            for sp in self.spectators:
+                sp.push(text)
+
+    def _say(self, text):
+        self.notice = {"at": int(time.time() * 1000), "text": text}
+
+    def _attach(self, sp: Spectator, pid):
+        """Start sending `sp` the game in pairing `pid`, from where it is now."""
+        game = self.games.get(pid)
+        sp.watching = pid if game else None
+        if game and game.header:
+            sp.push(game.header)
+            sp.push(game.last[sp.admin])
+
+    def _announce(self, game: LiveGame):
+        """A game's first frame is ready: show it to everyone not watching another."""
+        for sp in self.spectators:
+            if sp.focus == game.pid or sp.watching == game.pid or (sp.focus is None and sp.watching not in self.games):
+                sp.watching = game.pid
+                sp.push(game.header)
+
+    async def _spectate(self, ws):
+        if len(self.spectators) >= MAX_SPECTATORS:
+            await ws.send(json.dumps({"t": "error", "msg": "Too many people are watching. Please try again shortly."}))
+            return
+        sp = Spectator(ws)
+        self.spectators.add(sp)
+        pump = asyncio.create_task(sp.pump())
+        try:
+            sp.push({"t": "state", **self.tournament_snapshot()})
+            self._attach(sp, self.featured)
+            async for raw in ws:
+                try:
+                    msg = json.loads(raw) if len(raw) <= 4096 else None
+                except ValueError:
+                    msg = None
+                if not isinstance(msg, dict):
+                    continue
+                t = msg.get("t")
+                if t == "focus":
+                    pid = msg.get("pid")
+                    sp.focus = pid if isinstance(pid, str) else None
+                    self._attach(sp, sp.focus or self.featured)
+                elif t == "auth":
+                    key = msg.get("key")
+                    sp.admin = isinstance(key, str) and hmac.compare_digest(key.encode(), self.admin_key.encode())
+                    if not sp.admin:
+                        sp.fails += 1
+                        await asyncio.sleep(1)          # guessing is slow, and soon over
+                    sp.push({"t": "auth", "ok": sp.admin})
+                    if sp.fails >= 5:
+                        break
+                elif t == "admin":
+                    problem = self._admin(msg) if sp.admin else "sign in as the organiser first"
+                    sp.push({"t": "admin", "do": msg.get("do"), "ok": problem is None, "msg": problem})
+        except websockets.ConnectionClosed:
+            pass
+        finally:
+            self.spectators.discard(sp)
+            sp.open = False
+            pump.cancel()
+            with suppress(asyncio.CancelledError):
+                await pump
+
+    def _admin(self, msg) -> str | None:
+        """Carry out an organiser's command. Returns why it could not be done, or None."""
+        do = msg.get("do")
+        try:
+            if do == "auto":
+                self.tour.set_auto(msg.get("on") is True)
+                self._queue_changed.set()
+            elif do == "exclude":
+                if not isinstance(msg.get("name"), str):
+                    return "no such agent"
+                self.tour.exclude(msg["name"], msg.get("on") is True)
+            elif do == "draw":
+                return self._draw(msg.get("best_of"), msg.get("seeding"))
+            elif do == "run":
+                return self._run_pairing(msg.get("pid"), msg.get("speed"))
+            elif do == "walkover":
+                self.tour.walkover(msg.get("pid"), msg.get("side"))
+            elif do == "reset":
+                self.tour.reset()
+                self._queue_changed.set()
+            else:
+                return "unknown command"
+        except ValueError as e:
+            return str(e)
+        finally:
+            self._changed()
+        return None
+
+    def _draw(self, best_of, seeding) -> str | None:
+        excluded = set(self.tour.d["excluded"])
+        names = [n for n, ags in self.agents.items() if n not in excluded and any(ag.alive for ag in ags)]
+        if seeding == "random":
+            random.shuffle(names)
+        else:
+            names.sort(key=lambda n: (-self.board.get(n).rating, n))
+        self.tour.draw(names, best_of, seeding)
+        self.notice = None
+        print(f"[tournament] bracket drawn: {len(names)} entrants, best of {best_of}, {seeding} seeding")
+        return None
+
+    def _run_pairing(self, pid, speed) -> str | None:
+        p = self.tour.pairing(pid)
+        problem = self.tour.playable(p)
+        if problem:
+            return problem
+        found = []
+        for name in p["players"]:
+            ag = next((x for x in self.idle.values() if x.alive and x.name == name), None)
+            if ag is None:
+                return f"{name} is in another game" if any(x.alive for x in self.agents.get(name, ())) \
+                    else f"{name} is not connected"
+            found.append(ag)
+        # claimed with no await in between, so nothing else can take either agent
+        for ag in found:
+            self.idle.pop(ag.queue_id, None)
+        p["live"] = True
+        game = LiveGame(self, p, speed if speed in SPEEDS else 1)
+        self.games[game.pid] = game
+        self.featured = game.pid
+        task = asyncio.create_task(self._tournament_game(p, found, game))
+        self._tasks.add(task)
+        task.add_done_callback(self._tasks.discard)
+        return None
+
+    async def _tournament_game(self, p, agents, game: LiveGame):
+        pid = p["id"]
+        pace = 1 / (cr_sim.TICKS_PER_SECOND * game.speed) if game.speed else 0.0
+        try:
+            out = await self._play(*agents, live=game, pace=pace)
+        except BaseException:
+            out = {"void": "the server could not finish the game"}
+            raise
+        finally:
+            self.games.pop(pid, None)
+            if self.featured == pid:
+                self.featured = next(reversed(self.games), None)
+            if "void" in out:
+                p["live"] = False
+                over = {"t": "over", "pid": pid, "void": out["void"]}
+                self._say(f"{p['players'][0]} vs {p['players'][1]}: game void, {out['void']}. Nothing was recorded.")
+            else:
+                crowns = out["crowns"] if out["p0"] == p["players"][0] else out["crowns"][::-1]
+                self.tour.record(pid, out["winner"], {"match": out["match"], "crowns": crowns, "forfeit": out["forfeit"]})
+                over = {"t": "over", "pid": pid, "match": out["match"], "winner": out["winner"],
+                        "crowns": out["crowns"], "forfeit": out["forfeit"], "wins": p["wins"],
+                        "decided": p["winner"] is not None,
+                        "champion": self.tour.d["champion"] if self.tour.phase == "done" else None}
+            for sp in self.spectators:
+                if sp.watching == pid:
+                    sp.push(over)
+                    sp.watching = None
+            self._changed()
 
     def _rating(self, agent):
         return None if agent.human else round(self.board.get(agent.name).rating, 1)
@@ -415,6 +748,10 @@ async def main():
     arena = Arena()
     asyncio.create_task(arena.matchmaker())
     print(f"cr-arena listening on ws://{host}:{port}  (data: {DATA_DIR}, move timeout {MOVE_TIMEOUT}s)")
+    if ADMIN_KEY:
+        print("organiser key: taken from CR_ADMIN_KEY", flush=True)
+    else:
+        print(f"organiser key for /tournament (set CR_ADMIN_KEY to choose your own): {arena.admin_key}", flush=True)
     web = Web(arena)
     async with websockets.serve(arena.handler, host, int(port), ping_interval=20,
                                 process_request=web.process_request):

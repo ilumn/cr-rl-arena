@@ -8,6 +8,12 @@ In short: your agent opens a WebSocket, sends one `join` message with a name and
 a deck, then answers every observation with an action until it disconnects. The
 server runs the matches, keeps the ratings and saves a replay of every game.
 
+Joining enrols you. You do not start matches and you cannot tell what kind of
+match you are given: a tournament pairing started by the organiser, a practice
+game on the open ladder when the organiser has switched that on, or a person
+playing you from the website. Stay connected and answer whatever arrives.
+`https://<your-arena-host>/tournament` shows whether you are in the pool.
+
 ## Quick start
 
 ```bash
@@ -32,7 +38,7 @@ All messages are JSON text frames.
 you    → {"t": "join", "name": "my-team", "deck": ["knight", ... 8 cards ...]}
 server → {"t": "joined", "name": "my-team", "rating": 1200.0}
 
-        ... wait in the queue until an opponent is free ...
+        ... wait in the pool until you are given a match ...
 
 server → {"t": "start", "opponent": "other-team"}
 server → {"t": "obs", "obs": {"tick": 0, ...}}                 ┐ once per tick,
@@ -40,22 +46,25 @@ you    → {"t": "act", "tick": 0, "action": [slot, x, y]}       ┘ until the m
 server → {"t": "result", "result": "win", "crowns": [3, 1],
           "rating": 1216.0, "delta": 16.0, "match": 42, "seed": 123}
 
-        ... back in the queue automatically; the next "start" follows ...
+        ... back in the pool automatically; wait for the next "start" ...
 ```
 
 | Message | Direction | Meaning |
 |---|---|---|
 | `join` | you → server | Must be your first message, within 30 seconds of connecting. |
-| `joined` | server → you | You are in the queue. `rating` is your current rating. |
+| `joined` | server → you | You are in the pool. `rating` is your current rating. |
 | `start` | server → you | A match is beginning, against `opponent`. |
 | `obs` | server → you | The game state as you see it, sent on every tick. **You must reply with `act`.** |
 | `act` | you → server | Your reply: the `tick` you are answering, and `[slot, x, y]` to play a card or `null` to do nothing. |
 | `result` | server → you | The match is over: `result` is `win`, `loss` or `draw`, and `crowns` is `[yours, theirs]`. |
-| `aborted` | server → you | The match was called off because your opponent stopped answering. It does not count. You are back in the queue. |
+| `aborted` | server → you | The match was called off because your opponent stopped answering. It does not count. You are back in the pool. |
 | `error` | server → you | You were refused or removed; `msg` says why. The connection then closes. |
 
-You stay connected between matches and are re-queued after each one. To stop
-playing, close the connection.
+You stay connected between matches and go back in the pool after each one. The
+wait for a `start` can be long: in a tournament it lasts until the organiser
+calls your pairing. To stop playing, close the connection. If you are
+disconnected, reconnect and `join` again under the same name; your place in the
+bracket is kept by name.
 
 ## You always play as the bottom player
 
@@ -107,7 +116,7 @@ Do not flip anything yourself.
   answer the newest observation.
 - **Ten missed turns in a row and you are removed.** The server closes the match
   without recording it, tells you why in an `error` message and disconnects you.
-  Your opponent gets `aborted` and goes back in the queue. Reconnect and `join`
+  Your opponent gets `aborted` and goes back in the pool. Reconnect and `join`
   again when your agent is ready.
 - **If you disconnect during a match you forfeit it.** That match does count.
 - **Matches run as fast as both agents answer, not in real time.** A full
@@ -115,11 +124,11 @@ Do not flip anything yourself.
   times your round-trip time: a few seconds for fast agents on a good connection,
   several minutes if each reply takes 100 ms.
 - **Human opponents use real time and are unrated.** A person can claim your bot
-  while it is waiting in the queue at `/play`. In this case `start` includes
+  while it is waiting in the pool, from `/play`. In this case `start` includes
   `"rated": false, "realtime": true`; keep answering every observation as usual.
   Observations arrive at up to 20 ticks per second. The game and replay are saved,
   `result` includes `"rated": false` and a zero `delta`, and neither your Elo nor
-  ranked record changes. Your bot automatically returns to the queue afterward.
+  ranked record changes. Your bot automatically returns to the pool afterward.
 
 ### Passing a turn
 
@@ -361,7 +370,7 @@ server runs.
 | `error`: "a deck is required" or "invalid deck: …" | The `deck` in your `join` is missing or illegal. The message names the problem. |
 | `error`: "expected join or leaderboard" | Your first message was not a `join`. |
 | `error`: "removed: no reply to 10 turns in a row" | Your agent stopped answering. Reply to every observation, with a `null` action when you have nothing to do. |
-| Connected, but nothing happens | You are waiting in the queue for a second agent to be free. |
+| Connected, but nothing happens | That is normal: you are in the pool, and matches are started by the organiser. Check that you appear on `/tournament`. |
 | The connection closes right after connecting | No `join` arrived within 30 seconds, or it was refused. |
 | Your cards never appear | Read `last_action` in the next observation: it says why the move was ignored. If your code flips `y` for a "top seat", remove that. |
 | `last_action` is always `malformed` | Your reply has no `tick`, or the slot is not a whole number, or the action is not a list of three values. |
